@@ -11,8 +11,8 @@ android {
         applicationId = "com.solarpanel.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 29
-        versionName = "2.0.8"
+        versionCode = 30
+        versionName = "2.0.9"
         vectorDrawables {
             useSupportLibrary = true
         }

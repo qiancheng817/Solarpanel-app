@@ -294,7 +294,7 @@ class MainActivity : AppCompatActivity() {
                 // 加载过程中提前注入：面板 HTML 一旦解析出 head/下拉框，
                 // 样式立即生效，避免首开先看到老样式、刷新才正常。
                 // 两个脚本均幂等，重复调用无副作用。
-                if (newProgress in 30..99) {
+                if (newProgress in 20..99) {
                     injectPanelCssFix()
                     injectGroupNav()
                 }
@@ -1443,8 +1443,8 @@ class MainActivity : AppCompatActivity() {
          */
         private val GROUP_NAV_JS =
             "(function(){" +
-                "if(window.__spGroupNav){return;}" +
-                "window.__spGroupNav=true;" +
+                "function spBoot(){" +
+                "if(window.__spGroupNav){try{window.__spGroupNav.fix();}catch(e){}return;}" +
                 "var LS_KEY='sp_nav_group_v1',EDGE=34,TH=42;" +
                 "var st=document.createElement('style');" +
                 "st.textContent=[" +
@@ -1528,19 +1528,33 @@ class MainActivity : AppCompatActivity() {
                 "if(s&&typeof s.idx==='number'&&s.idx<sel.options.length&&(!s.title||sel.options[s.idx].textContent===s.title)){" +
                 "if(s.idx!==(+sel.value)){applySelect(s.idx);}" +
                 "else{var c=track.children[s.idx];if(c){c.scrollIntoView({inline:'center',block:'nearest'});}}}}" +
-                "function run(){if(sel&&sel.options&&sel.options.length){rebuild();restore();}}" +
-                "function schedule(){if(pending){return;}pending=true;" +
-                "setTimeout(function(){pending=false;safe(run);},80);}" +
-                "function start(){sel=document.getElementById('navbarSelect');if(!sel){return;}" +
-                "if(!observer){observer=new MutationObserver(function(){schedule();});" +
+                "function ensure(){safe(function(){" +
+                // 面板可能整体重建 <head> 里的内容，样式表被移除时补回去
+                "if(!st.isConnected){(document.head||document.documentElement).appendChild(st);}" +
+                "var cur=document.getElementById('navbarSelect');" +
+                // 面板数据到达后常把 select 节点整个替换；检测到换人就重新挂监听
+                "if(cur!==sel){" +
+                "sel=cur;" +
+                "if(observer){observer.disconnect();observer=null;}" +
+                "if(sel){" +
+                "observer=new MutationObserver(function(){schedule();});" +
                 "observer.observe(sel,{childList:true});" +
-                "sel.addEventListener('change',function(){safe(persist);syncActive(+sel.value,true);scheduleUpgrade();});}" +
-                "schedule();}" +
-                "var tries=0;" +
-                "var iv=setInterval(function(){" +
-                "if(document.getElementById('navbarSelect')){clearInterval(iv);start();}" +
-                "else if(++tries>80){clearInterval(iv);}},150);" +
-                "start();" +
+                "sel.addEventListener('change',function(){safe(persist);syncActive(+sel.value,true);scheduleUpgrade();});" +
+                "}}" +
+                "if(!sel||!sel.options||!sel.options.length){if(bar.isConnected){bar.style.display='none';}return;}" +
+                // 胶囊条被一起清掉、位置错乱或数量不一致 → 整体重建
+                "if(!bar.isConnected||bar.parentNode!==sel.parentNode||track.children.length!==sel.options.length){rebuild();}" +
+                "else{bar.style.display='block';syncActive(+sel.value,false);}" +
+                "if(!restored){restore();}" +
+                "});}" +
+                "function schedule(){if(pending){return;}pending=true;" +
+                "setTimeout(function(){pending=false;ensure();},80);}" +
+                "window.__spGroupNav={fix:ensure};" +
+                "ensure();" +
+                // 前 20 秒高频巡检（面板首屏数据/Service Worker 双渲染都在此区间），
+                // 之后低频常驻：自愈开销极小，保证任何时候被面板重建都能自动恢复。
+                "var fastIv=setInterval(ensure,300);" +
+                "setTimeout(function(){clearInterval(fastIv);setInterval(ensure,1500);},20000);" +
                 "var x0=0,y0=0,dec=null,ign=false;" +
                 "document.addEventListener('touchstart',function(e){" +
                 "dec=null;ign=false;" +
@@ -1563,6 +1577,8 @@ class MainActivity : AppCompatActivity() {
                 "e.preventDefault();}},{passive:false});" +
                 "document.addEventListener('touchend',function(){dec=null;},{passive:true});" +
                 "document.addEventListener('touchcancel',function(){dec=null;},{passive:true});" +
+                "}" +
+                "spBoot();" +
                 "})();"
 
         /**

@@ -1333,7 +1333,7 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton(R.string.dialog_cancel, null)
             .setPositiveButton(R.string.update_download_button) { _, _ ->
                 // APK 直链：guessFileName 会自动取 solarpanel-x.y.z.apk
-                enqueueDownload(info.apkUrl, null, null, null)
+                enqueueDownload(info.apkUrl, "", null, null)
             }
             .show()
     }

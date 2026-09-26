@@ -55,7 +55,9 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.solarpanel.app.databinding.ActivityMainBinding
+import com.solarpanel.app.databinding.ItemServerHistoryBinding
 import com.solarpanel.app.databinding.SheetActionsBinding
+import com.solarpanel.app.databinding.SheetServerSwitchBinding
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -525,7 +527,7 @@ class MainActivity : AppCompatActivity() {
         }
         sheetBinding.rowChangeServer.setOnClickListener {
             dialog.dismiss()
-            showSetupPanel(Prefs.getServer(this))
+            showServerSwitchSheet()
         }
         sheetBinding.rowClearData.setOnClickListener {
             dialog.dismiss()
@@ -1024,7 +1026,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.errorChangeButton.setOnClickListener {
-            showSetupPanel(Prefs.getServer(this))
+            // 连接失败时换服务器：优先弹出历史列表供一键切换
+            if (Prefs.getServerHistory(this).size > 1) {
+                showServerSwitchSheet()
+            } else {
+                showSetupPanel(Prefs.getServer(this))
+            }
         }
     }
 
@@ -1035,12 +1042,54 @@ class MainActivity : AppCompatActivity() {
             return
         }
         binding.serverInputLayout.error = null
-        Prefs.setServer(this, normalized)
         toast(R.string.toast_url_saved)
+        switchToServer(normalized)
+    }
 
+    /** 切换/保存服务器并加载：同时写入历史记录。 */
+    private fun switchToServer(url: String) {
+        Prefs.setServer(this, url)
         webView.stopLoading()
         webView.clearHistory()
-        loadServer(normalized)
+        loadServer(url)
+    }
+
+    /** 切换服务器底部面板：列出连接过的地址供一键切换。 */
+    private fun showServerSwitchSheet() {
+        val dialog = BottomSheetDialog(this)
+        val sheet = SheetServerSwitchBinding.inflate(layoutInflater)
+        val current = Prefs.getServer(this)
+
+        fun rebuildList() {
+            val history = Prefs.getServerHistory(this)
+            sheet.historyList.removeAllViews()
+            sheet.emptyHint.isVisible = history.isEmpty()
+            history.forEach { url ->
+                val row = ItemServerHistoryBinding.inflate(
+                    layoutInflater, sheet.historyList, false
+                )
+                row.serverUrl.text = url
+                row.currentHint.isVisible = url == current
+                row.root.setOnClickListener {
+                    dialog.dismiss()
+                    if (url != current) switchToServer(url)
+                }
+                row.deleteButton.setOnClickListener {
+                    Prefs.removeServerFromHistory(this, url)
+                    rebuildList()
+                }
+                sheet.historyList.addView(row.root)
+            }
+        }
+        rebuildList()
+
+        sheet.rowAddServer.setOnClickListener {
+            dialog.dismiss()
+            showSetupPanel(Prefs.getServer(this))
+        }
+
+        dialog.setContentView(sheet.root)
+        dialog.show()
     }
 
     private fun loadServer(url: String) {

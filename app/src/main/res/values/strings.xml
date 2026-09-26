@@ -20,6 +20,11 @@
     <string name="menu_close">关闭并返回首页</string>
     <string name="menu_refresh">刷新</string>
     <string name="menu_change_server">修改服务器地址</string>
+    <string name="menu_switch_server">切换服务器</string>
+    <string name="menu_add_server">添加新服务器</string>
+    <string name="menu_server_history_empty">还没有连接记录，添加一个服务器地址吧</string>
+    <string name="menu_server_current">当前连接</string>
+    <string name="menu_server_delete">删除该记录</string>
     <string name="menu_clear_data">清除缓存与登录状态</string>
     <string name="menu_open_browser">用系统浏览器打开</string>
     <string name="menu_about">关于</string>

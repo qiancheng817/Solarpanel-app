@@ -138,15 +138,15 @@
         <ImageView
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:contentDescription="@string/menu_change_server"
-            android:src="@drawable/ic_edit"
+            android:contentDescription="@string/menu_switch_server"
+            android:src="@drawable/ic_dns"
             app:tint="@color/brand_blue_dark" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
-            android:text="@string/menu_change_server"
+            android:text="@string/menu_switch_server"
             android:textColor="@color/app_text_primary"
             android:textSize="16sp" />
     </LinearLayout>

@@ -1319,7 +1319,23 @@ class MainActivity : AppCompatActivity() {
                     if (!silent) toast(R.string.toast_update_latest)
                 }
                 is UpdateChecker.Result.Error -> {
-                    if (!silent) toast(R.string.toast_update_failed)
+                    if (!silent) {
+                        // 显示具体原因，并提供“浏览器打开发布页”兜底
+                        AlertDialog.Builder(this)
+                            .setTitle(R.string.toast_update_failed)
+                            .setMessage(
+                                getString(R.string.toast_update_failed_detail, result.message)
+                            )
+                            .setNegativeButton(R.string.dialog_cancel, null)
+                            .setPositiveButton(R.string.update_open_browser) { _, _ ->
+                                startExternal(
+                                    Uri.parse(
+                                        "https://github.com/qiancheng817/Solarpanel-app/releases/latest"
+                                    )
+                                )
+                            }
+                            .show()
+                    }
                 }
             }
         }

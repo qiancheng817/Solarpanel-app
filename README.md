@@ -22,6 +22,8 @@
 - **左缘手势后退**：从屏幕左边缘向右滑动，在网页内即返回上一页
 - **左缘手势退出**：已在面板首页时再次左缘滑动，确认后退出 App
 - **系统返回键**：优先返回网页历史，根页面双击退出
+- **分组切换**：时钟下方是图标胶囊条（一行 5 个，超过可左右滑动），点胶囊切换分组；在页面区域**左右滑动屏幕**也可切换上 / 下一个分组
+- **返回记住分组**：打开卡片后再退回面板，自动停在该卡片所在的分组
 - **右上角三点菜单**：刷新、内外网切换、切换桌面 / 手机模式、修改服务器地址、清除缓存、用系统浏览器打开、关于
 - 顶栏**固定显示**，白色背景与手机状态栏融为一体，不会与系统状态栏重叠
 
@@ -59,4 +61,4 @@ Kotlin · AndroidX · Material 3 · WebView · GitHub Actions
 ## 致谢
 
 - 面板本体：[Ozero-top/Solar-Panel](https://github.com/Ozero-top/Solar-Panel)
-- 早期 WebView 套壳版本：[qiancheng817/Solarpanel-app](https://github.com/qiancheng817/Solarpanel-app)
+- 本仓库的 Git 历史中保留了早期 Java WebView 套壳版本

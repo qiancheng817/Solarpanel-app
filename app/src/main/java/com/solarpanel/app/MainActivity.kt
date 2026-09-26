@@ -381,12 +381,14 @@ class MainActivity : AppCompatActivity() {
                     hideErrorPanel()
                 }
                 injectPanelCssFix()
+                injectGroupNav()
                 updateCloseButton()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次
                 injectPanelCssFix()
+                injectGroupNav()
                 updateCloseButton()
             }
 
@@ -875,6 +877,15 @@ class MainActivity : AppCompatActivity() {
     /** 注入面板手机端适配样式，详见 PANEL_CSS_FIX_JS。 */
     private fun injectPanelCssFix() {
         webView.evaluateJavascript(PANEL_CSS_FIX_JS, null)
+    }
+
+    /**
+     * 注入图标胶囊分组条，详见 GROUP_NAV_JS：
+     * 一行 5 个图标胶囊、可点可滑；屏幕左右滑动切换分组；记忆当前分组，
+     * 从卡片返回时恢复到该卡片所在分组。脚本自启动并等待面板数据，可重复注入。
+     */
+    private fun injectGroupNav() {
+        webView.evaluateJavascript(GROUP_NAV_JS, null)
     }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
@@ -1410,6 +1421,126 @@ class MainActivity : AppCompatActivity() {
                 ".card.app-card .info .t{font-size:12px;max-width:88px;}" +
                 "}';" +
                 "(document.head||document.documentElement).appendChild(s);" +
+                "})();"
+
+        /**
+         * 图标胶囊分组条（nav 模式手机端）：
+         * - 一行 5 个、仅显示图标（取分组内第一张卡片的图标；无卡片用地球图标）；
+         *   超过 5 个可横向滑动胶囊条查看更多。
+         * - 点击胶囊切换分组；在网页区域左右滑动屏幕也可切换上/下一个分组。
+         * - 当前分组写入 localStorage，页面因打开卡片而跳走、再返回时恢复到
+         *   该卡片所在分组，而不是默认第一个。
+         * 脚本通过 MutationObserver + 轮询等待面板异步渲染，幂等，可重复注入。
+         */
+        private val GROUP_NAV_JS =
+            "(function(){" +
+                "if(window.__spGroupNav){return;}" +
+                "window.__spGroupNav=true;" +
+                "var LS_KEY='sp_nav_group_v1',EDGE=34,TH=42;" +
+                "var st=document.createElement('style');" +
+                "st.textContent=[" +
+                "'#spGroupBar{margin:0;padding:2px 0 8px;}'," +
+                "'#spGroupBar .sp-track{display:flex;gap:4px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;}'," +
+                "'#spGroupBar .sp-track::-webkit-scrollbar{display:none;}'," +
+                "'#spGroupBar .sp-cap{flex:0 0 calc((100% - 16px)/5);scroll-snap-align:center;display:flex;align-items:center;justify-content:center;}'," +
+                "'#spGroupBar .sp-in{width:46px;height:46px;border-radius:999px;background:var(--surface,#fff);border:1.5px solid var(--edge,#ddd);display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;}'," +
+                "'#spGroupBar .sp-in img{width:100%;height:100%;object-fit:cover;border-radius:999px;}'," +
+                "'#spGroupBar .sp-in .sp-tx{font-size:15px;font-weight:600;color:#fff;line-height:1;}'," +
+                "'#spGroupBar .sp-in .sp-globe{width:24px;height:24px;color:var(--text-muted,#888);}'," +
+                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);background:var(--accent-weak,rgba(59,130,246,0.10));}'," +
+                "'#navbarSelect{display:none !important;}'" +
+                "].join('');" +
+                "(document.head||document.documentElement).appendChild(st);" +
+                "var bar=document.createElement('div');bar.id='spGroupBar';bar.style.display='none';" +
+                "var track=document.createElement('div');track.className='sp-track';bar.appendChild(track);" +
+                "var sel=null,data=null,loaded=false,restored=false,observer=null,pending=false;" +
+                "function findGroup(idx){if(!data||!data.groups){return null;}return data.groups[idx]||null;}" +
+                "function makeGlobe(){" +
+                "var w=document.createElement('span');" +
+                "w.innerHTML='<svg class=\"sp-globe\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18\"/></svg>';" +
+                "return w.firstChild;}" +
+                "function textFallback(inEl,item,g){" +
+                "var raw=(item&&item.icon_type==='text'&&item.icon_value)?item.icon_value:((item&&item.title)||(g&&g.title)||'?');" +
+                "var tx=document.createElement('span');tx.className='sp-tx';" +
+                "tx.textContent=window.smartIconText?smartIconText(raw):String(raw).slice(0,2);" +
+                "inEl.style.background=(item&&item.icon_bg)||(window.stringColor?stringColor((item&&item.title)||(g&&g.title)||'?'):'#6b7280');" +
+                "inEl.appendChild(tx);}" +
+                "function addImg(inEl,srcs,item,g){" +
+                "var img=document.createElement('img');img.alt='';var i=0;" +
+                "img.onerror=function(){i++;if(i<srcs.length){img.src=srcs[i];}else{inEl.innerHTML='';textFallback(inEl,item,g);}};" +
+                "img.src=srcs[0];inEl.appendChild(img);}" +
+                "function fillCap(inEl,g){" +
+                "var item=g&&g.items&&g.items.length?g.items[0]:null;" +
+                "if(item){" +
+                "if(item.icon_type==='image'&&item.icon_value){addImg(inEl,[window.assetUrl?assetUrl(item.icon_value):item.icon_value],item,g);return;}" +
+                "if(item.icon_type==='favicon'&&item.url&&window.faviconSources){var ss=faviconSources(item.url);if(ss&&ss.length){addImg(inEl,ss,item,g);return;}}" +
+                "textFallback(inEl,item,g);return;}" +
+                "inEl.appendChild(makeGlobe());}" +
+                "function syncActive(val,scroll){" +
+                "var caps=track.children;" +
+                "for(var i=0;i<caps.length;i++){caps[i].classList.toggle('active',i===val);}" +
+                "if(scroll&&caps[val]){caps[val].scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}}" +
+                "function rebuild(){" +
+                "if(!sel||!sel.options||!sel.options.length){bar.style.display='none';return;}" +
+                "var prevLeft=track.scrollLeft;track.innerHTML='';" +
+                "for(var i=0;i<sel.options.length;i++){(function(idx){" +
+                "var cap=document.createElement('div');cap.className='sp-cap';" +
+                "var inEl=document.createElement('span');inEl.className='sp-in';" +
+                "fillCap(inEl,findGroup(idx));cap.appendChild(inEl);" +
+                "cap.addEventListener('click',function(){applySelect(idx);});" +
+                "track.appendChild(cap);})(i);}" +
+                "syncActive(+sel.value,false);track.scrollLeft=prevLeft;" +
+                "if(!bar.parentNode&&sel.parentNode){sel.parentNode.insertBefore(bar,sel);}" +
+                "bar.style.display='block';}" +
+                "function persist(){var idx=+sel.value;if(!sel.options[idx]){return;}" +
+                "try{localStorage.setItem(LS_KEY,JSON.stringify({idx:idx,title:sel.options[idx].textContent,t:Date.now()}));}catch(e){}}" +
+                "function applySelect(idx){if(!sel.options[idx]){return;}" +
+                "sel.value=String(idx);sel.dispatchEvent(new Event('change',{bubbles:true}));}" +
+                "function restore(){if(restored){return;}restored=true;" +
+                "var s=null;try{s=JSON.parse(localStorage.getItem(LS_KEY));}catch(e){}" +
+                "if(s&&typeof s.idx==='number'&&s.idx<sel.options.length&&(!s.title||sel.options[s.idx].textContent===s.title)){" +
+                "if(s.idx!==(+sel.value)){applySelect(s.idx);}" +
+                "else{var c=track.children[s.idx];if(c){c.scrollIntoView({inline:'center',block:'nearest'});}}}}" +
+                "function loadData(){if(loaded){return Promise.resolve(data);}loaded=true;" +
+                "return fetch('../backend/api/public.php',{credentials:'same-origin'})" +
+                ".then(function(r){return r.json();}).catch(function(){return null;})" +
+                ".then(function(d){data=d;return d;});}" +
+                "function run(){if(sel&&sel.options&&sel.options.length){loaded=false;" +
+                "loadData().then(function(){rebuild();restore();});}}" +
+                "function schedule(){if(pending){return;}pending=true;" +
+                "setTimeout(function(){pending=false;run();},120);}" +
+                "function start(){sel=document.getElementById('navbarSelect');if(!sel){return;}" +
+                "if(!observer){observer=new MutationObserver(function(){schedule();});" +
+                "observer.observe(sel,{childList:true});" +
+                "sel.addEventListener('change',function(){persist();syncActive(+sel.value,true);});}" +
+                "schedule();}" +
+                "var tries=0;" +
+                "var iv=setInterval(function(){" +
+                "if(document.getElementById('navbarSelect')){clearInterval(iv);start();}" +
+                "else if(++tries>60){clearInterval(iv);}} ,200);" +
+                "start();" +
+                "var x0=0,y0=0,dec=null,ign=false;" +
+                "document.addEventListener('touchstart',function(e){" +
+                "dec=null;ign=false;" +
+                "if(!sel||!sel.options.length||!bar.parentNode){ign=true;return;}" +
+                "var t=e.touches[0];" +
+                "if(t.clientX<EDGE||bar.contains(e.target)){ign=true;return;}" +
+                "var mm=document.getElementById('iframeModal');" +
+                "if(mm&&mm.classList.contains('show')){ign=true;return;}" +
+                "var at=document.activeElement;" +
+                "if(at&&(at.tagName==='INPUT'||at.tagName==='TEXTAREA'||at.tagName==='SELECT')){ign=true;return;}" +
+                "x0=t.clientX;y0=t.clientY;},{passive:true});" +
+                "document.addEventListener('touchmove',function(e){" +
+                "if(ign){return;}" +
+                "var t=e.touches[0],dx=t.clientX-x0,dy=t.clientY-y0;" +
+                "if(dec){e.preventDefault();return;}" +
+                "if(Math.abs(dx)>TH&&Math.abs(dx)>Math.abs(dy)*1.4){" +
+                "dec=dx<0?1:-1;" +
+                "var cur=+sel.value,n=cur+dec;" +
+                "if(n>=0&&n<sel.options.length){applySelect(n);}" +
+                "e.preventDefault();}},{passive:false});" +
+                "document.addEventListener('touchend',function(){dec=null;},{passive:true});" +
+                "document.addEventListener('touchcancel',function(){dec=null;},{passive:true});" +
                 "})();"
 
         /**

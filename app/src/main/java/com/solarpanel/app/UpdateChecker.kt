@@ -17,6 +17,10 @@ object UpdateChecker {
 
     private const val API_URL =
         "https://api.github.com/repos/qiancheng817/Solarpanel-app/releases/latest"
+    private const val RELEASES_LATEST_URL =
+        "https://github.com/qiancheng817/Solarpanel-app/releases/latest"
+    private const val RELEASE_DOWNLOAD_BASE =
+        "https://github.com/qiancheng817/Solarpanel-app/releases/download"
 
     data class ReleaseInfo(
         val tagName: String,
@@ -75,6 +79,18 @@ object UpdateChecker {
     }
 
     private fun fetchRelease(proxy: String): ReleaseInfo? {
+        // 优先走 API（能拿到更新说明）；API 匿名限额 60次/小时按出口 IP 计，
+        // 共享代理出口常被用光返回 403，此时回退到 releases/latest 网页跳转方式。
+        return try {
+            fetchReleaseViaApi(proxy)
+        } catch (e: ApiException) {
+            fetchReleaseViaRedirect(proxy)
+        }
+    }
+
+    private class ApiException(message: String) : RuntimeException(message)
+
+    private fun fetchReleaseViaApi(proxy: String): ReleaseInfo? {
         val conn = openConnection(API_URL, proxy).apply {
             connectTimeout = 10_000
             readTimeout = 10_000
@@ -82,11 +98,11 @@ object UpdateChecker {
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "solarpanel-android")
         }
-        return try {
+        try {
             val code = conn.responseCode
             if (code != HttpURLConnection.HTTP_OK) {
                 // 把状态码带出去，便于诊断代理是否生效
-                throw RuntimeException("HTTP $code")
+                throw ApiException("HTTP $code")
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(body)
@@ -106,7 +122,34 @@ object UpdateChecker {
                 }
             }
             if (apkUrl.isEmpty()) return null
-            ReleaseInfo(tag, version, apkUrl, notes)
+            return ReleaseInfo(tag, version, apkUrl, notes)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * 兜底：releases/latest 会 302 到 releases/tag/vX.Y.Z，
+     * 从 Location 解析版本号，按命名约定拼出 APK 直链（无更新说明）。
+     */
+    private fun fetchReleaseViaRedirect(proxy: String): ReleaseInfo {
+        val conn = openConnection(RELEASES_LATEST_URL, proxy).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            instanceFollowRedirects = false
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "solarpanel-android")
+        }
+        try {
+            val code = conn.responseCode
+            if (code !in 300..399) throw RuntimeException("HTTP $code")
+            val location = conn.getHeaderField("Location")
+                ?: throw RuntimeException("跳转缺少地址")
+            val tag = location.substringAfterLast("/tag/", "")
+            if (tag.isBlank()) throw RuntimeException("无法解析版本号")
+            val version = tag.removePrefix("v")
+            val apkUrl = "$RELEASE_DOWNLOAD_BASE/$tag/solarpanel-$version.apk"
+            return ReleaseInfo(tag, version, apkUrl, "")
         } finally {
             conn.disconnect()
         }

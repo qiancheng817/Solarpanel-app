@@ -166,6 +166,8 @@ class MainActivity : AppCompatActivity() {
             showSetupPanel("")
         } else {
             loadServer(savedServer)
+            // 静默检查更新：避免启动瞬间弹窗打断用户
+            scheduleSilentUpdateCheck()
         }
     }
 
@@ -1281,6 +1283,58 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.about_title)
             .setMessage(getString(R.string.about_message, BuildConfig.VERSION_NAME, server))
             .setPositiveButton(R.string.dialog_ok, null)
+            .setNeutralButton(R.string.menu_check_update) { _, _ ->
+                checkUpdateFromUser()
+            }
+            .show()
+    }
+
+    // ------------------------------------------------------------------
+    // 应用内更新检查（纯匿名调用 GitHub 公开 API）
+    // ------------------------------------------------------------------
+
+    private var silentUpdateScheduled = false
+
+    /** 冷启动后延迟执行，避免与首页加载抢资源。 */
+    private fun scheduleSilentUpdateCheck() {
+        if (silentUpdateScheduled) return
+        silentUpdateScheduled = true
+        Handler(Looper.getMainLooper()).postDelayed({
+            runUpdateCheck(silent = true)
+        }, 3_000)
+    }
+
+    /** 手动触发：关于页点击检查更新。 */
+    private fun checkUpdateFromUser() {
+        toast(R.string.toast_checking_update)
+        runUpdateCheck(silent = false)
+    }
+
+    private fun runUpdateCheck(silent: Boolean) {
+        UpdateChecker.check(BuildConfig.VERSION_NAME) { result ->
+            when (result) {
+                is UpdateChecker.Result.HasUpdate ->
+                    showUpdateDialog(result.info)
+                UpdateChecker.Result.UpToDate -> {
+                    if (!silent) toast(R.string.toast_update_latest)
+                }
+                is UpdateChecker.Result.Error -> {
+                    if (!silent) toast(R.string.toast_update_failed)
+                }
+            }
+        }
+    }
+
+    private fun showUpdateDialog(info: UpdateChecker.ReleaseInfo) {
+        val notes = info.notes.ifBlank { getString(R.string.update_notes_empty) }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_found_title, info.versionName))
+            .setMessage(notes)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.update_download_button) { _, _ ->
+                // APK 直链：guessFileName 会自动取 solarpanel-x.y.z.apk
+                enqueueDownload(info.apkUrl, null, null, null)
+            }
             .show()
     }
 

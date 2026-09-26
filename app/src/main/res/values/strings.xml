@@ -25,6 +25,13 @@
     <string name="menu_server_history_empty">还没有连接记录，添加一个服务器地址吧</string>
     <string name="menu_server_current">当前连接</string>
     <string name="menu_server_delete">删除该记录</string>
+    <string name="menu_check_update">检查更新</string>
+    <string name="toast_checking_update">正在检查更新…</string>
+    <string name="toast_update_latest">已是最新版本</string>
+    <string name="toast_update_failed">检查更新失败，请稍后重试</string>
+    <string name="update_found_title">发现新版本 %1$s</string>
+    <string name="update_download_button">下载更新</string>
+    <string name="update_notes_empty">暂无更新说明。</string>
     <string name="menu_clear_data">清除缓存与登录状态</string>
     <string name="menu_open_browser">用系统浏览器打开</string>
     <string name="menu_about">关于</string>

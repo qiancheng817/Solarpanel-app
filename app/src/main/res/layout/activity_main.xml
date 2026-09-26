@@ -6,10 +6,30 @@
     android:layout_height="match_parent"
     android:background="@color/app_background">
 
+    <!-- 侧滑时内容右移露出的底层：暗色遮罩 + 返回箭头（位于内容之下） -->
+    <View
+        android:id="@+id/swipeScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0"
+        android:background="#CC000000" />
+
+    <ImageView
+        android:id="@+id/swipeArrow"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="16dp"
+        android:alpha="0"
+        android:background="@drawable/swipe_arrow_circle"
+        android:contentDescription="@string/menu_refresh"
+        android:padding="8dp"
+        android:src="@drawable/ic_arrow_back" />
+
     <!--
-        网页容器。整体会被顶栏高度往下推一段（translationY），
-        所以网页顶部不会被顶栏挡住；顶栏收起时这段位移归零，
-        可视区域立刻变大，而且不需要让 WebView 重新布局（不会造成网页回流抖动）。
+        网页容器。顶栏展开时整体下推一个顶栏高度（translationY），
+        网页顶部不会被顶栏挡住；顶栏收起时位移归零，不触发网页回流。
+        底部 margin 由 inset 监听设置，避开三键导航 / 手势条。
     -->
     <WebView
         android:id="@+id/webView"
@@ -17,44 +37,57 @@
         android:layout_height="match_parent" />
 
     <!--
-        顶栏：覆盖在网页之上，下滑自动收起、上滑自动出现。
-        注意：这里刻意不用 elevation —— FrameLayout 会按 Z 值排序绘制子视图，
-        一旦顶栏有海拔，它就会盖到下面的配置页 / 错误页之上。
+        边缘手势热区：仅 26dp 宽，覆盖在网页之上、顶栏 / 配置页 / 错误页之下。
+        从屏幕左缘按下并右滑即触发"后退 / 退出"手势。
+    -->
+    <View
+        android:id="@+id/edgeSwipeZone"
+        android:layout_width="26dp"
+        android:layout_height="match_parent" />
+
+    <!--
+        顶栏：固定显示，覆盖在网页之上，不随滚动收起。
+        顶部 padding 由 inset 监听设置为状态栏高度，背景延伸到状态栏后面，
+        工具栏内容永远在状态栏下方，绝不与手机原有顶栏重叠。
+        刻意不设 elevation：避免盖到配置页 / 错误页之上。
     -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/brand_blue_dark"
+        android:background="@color/app_topbar_bg"
         android:orientation="vertical">
 
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="@color/brand_blue_dark"
+            android:layout_height="46dp"
+            android:background="@color/app_topbar_bg"
+            android:minHeight="0dp"
+            android:theme="@style/ThemeOverlay.Solarpanel.Toolbar"
             app:menu="@menu/main_menu"
-            app:subtitleTextColor="#CFE4F1"
+            app:subtitleTextAppearance="@style/TextAppearance.Solarpanel.ToolbarSubtitle"
             app:title="@string/app_name"
-            app:titleTextColor="@color/white" />
+            app:titleTextAppearance="@style/TextAppearance.Solarpanel.ToolbarTitle"
+            app:titleMarginTop="0dp" />
 
         <ProgressBar
             android:id="@+id/progressBar"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
-            android:layout_height="3dp"
+            android:layout_height="2dp"
             android:max="100"
             android:progressTint="@color/brand_blue"
             android:visibility="gone" />
 
-        <!-- 顶栏下沿的细分隔线，网页内容从下面滚过时层次更清楚 -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#33000000" />
+            android:layout_height="0.5dp"
+            android:background="@color/app_topbar_divider" />
 
     </LinearLayout>
 
+    <!-- 首次配置 / 修改地址 -->
     <ScrollView
         android:id="@+id/setupPanel"
         android:layout_width="match_parent"
@@ -69,7 +102,7 @@
             android:gravity="center_horizontal"
             android:orientation="vertical"
             android:paddingLeft="28dp"
-            android:paddingTop="64dp"
+            android:paddingTop="48dp"
             android:paddingRight="28dp"
             android:paddingBottom="32dp">
 
@@ -127,6 +160,7 @@
 
     </ScrollView>
 
+    <!-- 错误页 -->
     <LinearLayout
         android:id="@+id/errorPanel"
         android:layout_width="match_parent"

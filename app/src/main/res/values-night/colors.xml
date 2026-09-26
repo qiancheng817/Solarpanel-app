@@ -10,6 +10,10 @@
     <color name="app_text_primary">#E8EAED</color>
     <color name="app_text_secondary">#9AA1A9</color>
 
+    <!-- 深色模式顶栏：近黑灰底，替代浅色版的纯白 -->
+    <color name="app_topbar_bg">#171C21</color>
+    <color name="app_topbar_divider">#24FFFFFF</color>
+
     <!-- 顶栏背景：浅色版是 #3E7FA8，深色版降亮度降饱和度，避免亮蓝条割裂深色主题 -->
     <color name="brand_blue_dark">#1C3C50</color>
     <!-- ProgressBar tint：浅色版是 #7FB9DB，深色版也调暗 -->

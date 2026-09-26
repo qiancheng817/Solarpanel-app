@@ -14,4 +14,8 @@
     <color name="app_background">#F7F6F2</color>
     <color name="app_text_primary">#1F2933</color>
     <color name="app_text_secondary">#6B7280</color>
+
+    <!-- 原生顶栏：白底，与手机状态栏融为一体 -->
+    <color name="app_topbar_bg">#FFFFFFFF</color>
+    <color name="app_topbar_divider">#14000000</color>
 </resources>

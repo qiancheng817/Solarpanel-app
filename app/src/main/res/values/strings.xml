@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Solarpanel</string>
+    <string name="app_name">solarpanel</string>
 
     <!-- 首次配置 -->
-    <string name="setup_title">连接到你的 Solarpanel</string>
-    <string name="setup_subtitle">填写你部署在飞牛 / NAS 上的 Solarpanel 地址</string>
+    <string name="setup_title">连接到你的 solarpanel</string>
+    <string name="setup_subtitle">填写你部署在飞牛 / NAS 上的 solarpanel 地址</string>
     <string name="setup_hint">服务器地址</string>
     <string name="setup_helper">支持 http:// 与 https://，也可以只填 IP:端口，例如 192.168.1.10:8080</string>
     <string name="setup_button">连接</string>
-    <string name="setup_check_remember">记住此地址</string>
 
     <!-- 错误页 -->
     <string name="err_title">无法连接到服务器</string>
@@ -16,7 +15,8 @@
     <string name="err_change">修改地址</string>
     <string name="err_detail">请确认手机与服务器处于同一网络，且服务已启动。</string>
 
-    <!-- 菜单 -->
+    <!-- 菜单 / 底部操作面板 -->
+    <string name="menu_sheet_title">操作</string>
     <string name="menu_close">关闭并返回首页</string>
     <string name="menu_refresh">刷新</string>
     <string name="menu_change_server">修改服务器地址</string>
@@ -25,6 +25,9 @@
     <string name="menu_about">关于</string>
     <string name="menu_toggle_display_to_mobile">切换为手机模式</string>
     <string name="menu_toggle_display_to_desktop">切换为电脑模式</string>
+    <string name="menu_lan">内外网切换</string>
+    <string name="menu_lan_wan_hint">当前：外网地址 · 点击改用内网地址</string>
+    <string name="menu_lan_lan_hint">当前：内网地址 · 点击改用外网地址</string>
 
     <!-- 提示 -->
     <string name="toast_url_saved">服务器地址已保存</string>
@@ -34,7 +37,7 @@
     <string name="toast_download_start">已开始下载，完成后可在通知栏查看</string>
     <string name="toast_download_fail">下载失败，请稍后重试</string>
     <string name="toast_notification_denied">未授予通知权限，下载完成后不会出通知</string>
-    <string name="toast_exit_hint">再按一次返回键退出</string>
+    <string name="toast_exit_hint">再操作一次返回即可退出应用</string>
     <string name="toast_ssl_warning">证书校验未通过，已按自托管模式继续</string>
     <string name="toast_display_mobile">已切换为手机模式</string>
     <string name="toast_display_desktop">已切换为电脑模式</string>
@@ -42,11 +45,11 @@
     <!-- 对话框 -->
     <string name="dialog_ok">确定</string>
     <string name="dialog_cancel">取消</string>
-    <string name="about_title">关于 Solarpanel</string>
-    <string name="about_message">Solarpanel 安卓客户端 %1$s\n\n这是给自托管 Solarpanel 导航面板套的原生外壳：所有页面都在应用内打开，不跳转外部浏览器。\n\n当前服务器：%2$s\n\n首次使用请填写你部署在飞牛 / NAS 上的地址。可在右上角菜单中随时修改。</string>
+    <string name="about_title">关于 solarpanel</string>
+    <string name="about_message">solarpanel 安卓客户端 %1$s\n\n为自托管 solarpanel 导航面板打造的原生客户端：所有页面都在应用内打开，不跳转外部浏览器；支持边缘滑动后退 / 退出。\n\n当前服务器：%2$s\n\n首次使用请填写你部署在飞牛 / NAS 上的地址，可在顶栏菜单中随时修改。</string>
     <string name="about_no_server">尚未设置</string>
     <string name="clear_data_title">清除缓存与登录状态</string>
-    <string name="clear_data_message">将清空网页缓存、Cookie 和本地存储，你需要重新登录 Solarpanel 后台。是否继续？</string>
+    <string name="clear_data_message">将清空网页缓存、Cookie 和本地存储，你需要重新登录 solarpanel 后台。是否继续？</string>
     <string name="file_chooser_title">选择文件</string>
 
     <!-- 反代 Basic 认证 -->

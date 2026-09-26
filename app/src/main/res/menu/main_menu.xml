@@ -9,34 +9,11 @@
         android:title="@string/menu_close"
         app:showAsAction="always" />
 
+    <!-- 打开底部操作面板 -->
     <item
-        android:id="@+id/action_refresh"
-        android:title="@string/menu_refresh"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_toggle_display"
-        android:title="@string/menu_toggle_display_to_mobile"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_change_server"
-        android:title="@string/menu_change_server"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_clear_data"
-        android:title="@string/menu_clear_data"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_open_browser"
-        android:title="@string/menu_open_browser"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_about"
-        android:title="@string/menu_about"
-        app:showAsAction="never" />
+        android:id="@+id/action_menu"
+        android:icon="@drawable/ic_more_vert"
+        android:title="@string/menu_sheet_title"
+        app:showAsAction="always" />
 
 </menu>

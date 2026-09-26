@@ -3,9 +3,6 @@ name: Build APK
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -63,7 +60,6 @@ jobs:
       - name: Prepare signing keystore
         id: keystore
         env:
-          # GitHub Secret 中配置的密钥库密码；未设置时回退为 solarpanel
           KEYSTORE_PASSWORD: ${{ secrets.SOLARPANEL_KEYSTORE_PASSWORD || 'solarpanel' }}
         run: |
           set -e
@@ -90,10 +86,10 @@ jobs:
         id: apk
         run: |
           set -e
-          VERSION="$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle | head -n 1)"
+          VERSION="$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)"
           SRC="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
           mkdir -p dist
-          DEST="dist/Solarpanel-${VERSION}.apk"
+          DEST="dist/solarpanel-${VERSION}.apk"
           cp "$SRC" "$DEST"
           echo "Built $DEST"
           ls -lh dist
@@ -113,35 +109,30 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Solarpanel-APK
+          name: solarpanel-APK
           path: ${{ steps.apk.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload generated keystore
-        if: steps.keystore.outputs.generated == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: signing-keystore
-          path: keystore/solarpanel.jks
-          retention-days: 7
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.apk.outputs.version }}
-          name: Solarpanel v${{ steps.apk.outputs.version }}
+          name: solarpanel v${{ steps.apk.outputs.version }}
           body: |
-            安卓客户端导航面板，来自 https://github.com/Ozero-top/Solar-Panel
+            solarpanel 原生安卓客户端（Kotlin），面板来自 https://github.com/Ozero-top/Solar-Panel
 
-            - 应用名：Solarpanel
+            - 应用名：solarpanel（沿用原有图标）
             - versionName：${{ steps.apk.outputs.version }}
             - 所有页面在应用内打开，不跳转外部浏览器
+            - 屏幕左缘手势滑动后退；在首页再滑动一次即可退出（系统返回键同样支持）
+            - 全面屏适配：顶栏不与手机状态栏重叠，底部内容避开导航栏 / 手势条
             - 下滑自动收起顶栏，上滑或回到顶部自动展开
-            - 进入服务页面后顶栏出现 `✕`，点一下即返回面板首页
-            - 首次启动需填写你部署在飞牛 / NAS 上的 Solarpanel 地址
+            - 进入服务页面后顶栏出现 ✕，点一下即返回面板首页
+            - 顶栏 ⋮ 弹出底部操作面板：刷新、手机 / 电脑模式、修改地址、清除缓存等
+            - 首次启动需填写部署在飞牛 / NAS 上的 solarpanel 地址
 
-            安装方式：下载下方的 APK，在手机上允许「安装未知来源应用」后直接安装。
+            安装方式：下载下方 APK，在手机上允许「安装未知来源应用」后直接安装；可直接覆盖旧版。
           files: ${{ steps.apk.outputs.apk_path }}
           draft: false
           make_latest: true

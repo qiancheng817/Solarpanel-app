@@ -1,228 +1,62 @@
-# Solarpanel
+# solarpanel 安卓客户端
 
-安卓客户端导航面板，来自 https://github.com/Ozero-top/Solar-Panel
-感谢项目原作者帮忙改代码实现缩放等各种功能！！！
+为自托管 [Solar-Panel](https://github.com/Ozero-top/Solar-Panel) 导航面板打造的原生安卓 App。所有页面都在应用内打开，不跳转外部浏览器；界面与操作习惯针对手机重新设计。
 
-这是一个用 WebView 封装的轻量外壳，把你部署在飞牛 / NAS 上的 Solarpanel 变成手机上可以一键打开的独立应用。
+## 下载安装
 
-## 特点
+到 [Releases](https://github.com/qiancheng817/solarpanel-app/releases) 页面下载最新的 `solarpanel-版本号.apk`，在手机上直接安装即可。
 
-- **全内嵌**：页面里的所有链接、`target="_blank"`、`window.open()` 都在应用内的 WebView 中打开，不会跳到系统浏览器。
-- **首次填址**：第一次启动时填写服务器地址，之后自动记住；地址随时可在右上角菜单里修改。
-- **局域网友好**：允许明文 HTTP，兼容自签名 HTTPS 证书，适合内网自建服务。
-- **后台可管**：支持后台管理面板所需的文件上传（图标 / 壁纸）与文件下载（备份导出），并自动带上登录 Cookie。
-- **返回键符合直觉**：优先回退网页历史，回到首页后双击退出。
-- **顶栏自动收放**：往下滑页面时顶栏自动收起，把空间让给内容；往上滑或回到页面顶部时自动出现。
-- **一键回首页**：进入任意服务页面后，顶栏右上角会出现 `✕`，点一下立刻回到面板首页。
-- **适配面板 PWA**：面板 v2.1.00 起自带 Service Worker 离线缓存，「清除缓存与登录状态」会同步注销 SW 并清空其缓存；离线兜底交给面板自带的 `offline.html`。
-- **自适应图标**：适配 Android 8.0+ 的圆形 / 方形 / 圆角方形各种启动器遮罩。
+- 支持 Android 7.0（API 24）及以上
+- 正式签名安装包，覆盖安装升级无需卸载旧版
 
-## 安装
+## 首次使用
 
-1. 打开本仓库的 [Releases](../../releases) 页面，下载最新的 `Solarpanel-x.x.x.apk`。
-2. 在手机上允许「安装未知来源应用」，然后直接安装。
-3. 首次打开时填写你部署在飞牛上的 Solarpanel 地址，例如 `192.168.1.10:8080`。
-   - 可以省略 `http://`，程序会自动补全。
-   - 如果是反代域名，填 `https://panel.example.com`。
+1. 打开 App，填写你部署在 NAS / 服务器上的 solarpanel 地址，例如 `192.168.1.10:8080`
+2. 支持 `http://`、`https://`，也可以只填 `IP:端口`
+3. 点击「连接」即可进入面板
 
-> 本应用不上架任何应用商店，仅供自用侧载安装。
+之后可在右上角菜单中随时「修改服务器地址」。
 
-## 首次配置说明
+## 操作方式
 
-地址栏支持三种写法，都会被正确识别：
+- **左缘手势后退**：从屏幕左边缘向右滑动，在网页内即返回上一页
+- **左缘手势退出**：已在面板首页时再次左缘滑动，确认后退出 App
+- **系统返回键**：优先返回网页历史，根页面双击退出
+- **右上角三点菜单**：刷新、内外网切换、切换桌面 / 手机模式、修改服务器地址、清除缓存、用系统浏览器打开、关于
+- 顶栏**固定显示**，白色背景与手机状态栏融为一体，不会与系统状态栏重叠
 
-| 你的服务地址 | 填写内容 |
-|---|---|
-| 局域网 IP + 端口 | `192.168.1.10:8080` |
-| 明文 HTTP | `http://192.168.1.10:8080` |
-| HTTPS 反代 | `https://panel.example.com` |
+## 手机端适配
 
-地址会被规范化处理（去掉末尾多余的 `/`、补全协议头）。
+- 面板服务卡片在手机上一行两个（后台「小图标」风格时一行三个），图标与字号按窄屏调整
+- 边到边（edge-to-edge）布局：自动避让状态栏与底部手势导航条
+- 跟随系统深色模式
+
+## 功能一览
+
+- 面板所有链接、`target="_blank"` 页面全部在应用内打开
+- 内网 / 外网地址模式切换（状态与面板网页端共享）
+- 桌面 / 手机显示模式切换（自定义 UA）
+- 支持 HTTP 明文与自签名 HTTPS 证书（自托管场景）
+- 文件上传、系统下载管理（含通知栏进度）
+- 一键回到面板首页
+- 面板 PWA Service Worker / 缓存清理
+- 渲染进程异常退出时自动重建并恢复当前页面
 
 ## 在线构建
 
-仓库内置了 GitHub Actions 工作流，**不需要在本地安装 Android SDK**：
+本仓库通过 **GitHub Actions** 在云端自动构建，无需在本地配置 Android 环境：
 
-- 推送到 `main` 分支，或在 Actions 页面手动触发 `Build APK`。
-- 工作流会安装 JDK 17 与 Android SDK，构建 release APK。
-- 构建完成后自动创建 GitHub Release 并把 APK 挂上去，同时保留一份 artifact。
+- 每次向 `main` 分支推送代码都会自动触发构建
+- 工作流执行 `assembleRelease`，使用仓库内的正式签名密钥
+- 构建成功后自动创建 / 更新对应版本的 [Release](https://github.com/qiancheng817/solarpanel-app/releases) 并上传 APK
 
-构建过程会自动完成三件事：
+如需自行构建：JDK 17、Android SDK 34、Gradle 8.9，执行 `./gradlew assembleRelease`，产物位于 `app/build/outputs/apk/release/`。
 
-1. 若仓库里没有 `keystore/solarpanel.jks`，自动生成一个（RSA 2048，有效期 10000 天）。
-2. 用该密钥库签名 APK。
-3. 打印 `aapt2 dump badging` 与 `apksigner verify` 结果，便于核对包名、版本与签名。
+## 技术栈
 
-### 关于签名密钥库
+Kotlin · AndroidX · Material 3 · WebView · GitHub Actions
 
-仓库里的 `keystore/solarpanel.jks` 口令固定为 `solarpanel`，这是**刻意为之**：只有密钥库固定，后续重新构建的 APK 才能覆盖安装旧版本，不会因为签名不同而必须卸载重装。
+## 致谢
 
-**但这意味着任何拿到这个仓库的人都能签出与本应用同名同签名的 APK。** 因此：
-
-- 它只适合个人自用侧载，**绝对不要**用这个密钥库去做任何对外分发的版本。
-- 想换一套独占签名：删掉 `keystore/solarpanel.jks` 并重新触发构建，工作流会生成新的密钥库；代价是这次换签必须卸载旧版再装新版。
-
-## 本地构建（可选）
-
-如果你确实想在本地编译：
-
-```bash
-# 需要 JDK 17 与 Android SDK（platform 34 + build-tools 34.0.0）
-gradle assembleRelease
-```
-
-本工程没有提交 Gradle Wrapper，因此请使用系统安装的 Gradle 8.9 或更高版本；也可以执行一次 `gradle wrapper` 自行生成 wrapper。
-
-## 工程结构
-
-```
-Solarpanel/
-├── .github/workflows/build.yml            在线构建 + 自动发 Release
-├── keystore/solarpanel.jks                固定签名密钥库（见上文说明）
-├── docs/                                  图标展示图与启动器效果预览
-└── app/
-    ├── build.gradle
-    └── src/main/
-        ├── AndroidManifest.xml
-        ├── java/com/solarpanel/app/
-        │   ├── MainActivity.java          WebView 外壳主逻辑
-        │   ├── Prefs.java                 服务器地址存储
-        │   └── Urls.java                  地址规范化与校验
-        └── res/
-            ├── layout/activity_main.xml   主界面 / 首次配置 / 错误页
-            ├── menu/main_menu.xml         右上角菜单
-            ├── drawable/ic_close.xml      顶栏「关闭并返回首页」图标
-            ├── values/                    颜色、字符串、主题
-            ├── values-night/colors.xml    深色模式配色
-            ├── xml/network_security_config.xml
-            └── mipmap-*/                  各密度图标
-```
-
-## 关键实现说明
-
-### 为什么链接不会跳到浏览器
-
-`configureWebView()` 中关闭了多窗口支持：
-
-```java
-settings.setSupportMultipleWindows(false);          // target="_blank" 留在本 WebView
-settings.setJavaScriptCanOpenWindowsAutomatically(true);
-```
-
-再配合 `WebViewClient.shouldOverrideUrlLoading()` 对 `http/https` 返回 `false`，页面导航全部留在应用内。只有 `tel:`、`mailto:`、`sms:`、`geo:`、`weixin://` 这类**非网页**协议才会交给系统对应的应用处理。
-
-### 顶栏自动收放与一键回首页
-
-顶栏是**覆盖在网页之上的图层**：网页容器整体被顶栏高度向下推一段，所以网页顶部不会被顶栏挡住；顶栏收起时这段位移归零，可视区域立刻变大，而且**不需要让 WebView 重新布局**——网页不会回流，滚动过程中不会抖。
-
-滚动方向由注入到页面的 JS 上报（`MainActivity.SCROLL_HOOK_JS`）：
-
-- 监听挂在 `document` 的**捕获阶段**，因此页面内部任何滚动容器（含懒加载列表）都能命中；
-- 位移小于 3px 不上报，避免惯性滚动末尾顶栏来回闪动；
-- 往下滑 → 收起顶栏；往上滑、或回到页面顶部 → 顶栏自动出现；每次开始加载新页面时也会先出现。
-
-万一 JS 注入没生效（页面禁用脚本，或内容在跨域 iframe 里滚动），会自动退化为**按手指滑动方向**判断，功能不会整个失效；只要 JS 上报过一次，兜底逻辑就自动让位。
-
-顶栏右侧的 `✕`（`action_close`）只在**当前不在面板首页**时出现。地址比较忽略查询串与锚点，并把末尾斜杠、默认端口统一归一化（`Urls.isSamePage()`），所以 `http://ip:8080`、`http://ip:8080/`、`http://ip:8080/#xx` 会被认定是同一页。点一下即回到面板首页。
-
-### 安全取舍（请知悉）
-
-为了适配自托管环境，工程做了两处**降低默认安全性**的配置：
-
-1. `network_security_config.xml` 允许明文 HTTP，并信任用户安装的 CA 证书。
-2. `MainActivity.ALLOW_SELF_SIGNED_CERTIFICATE = true`，自签名证书校验失败时继续加载。
-
-这在内网访问自己的服务时是方便且合理的；但请**不要**用这个应用去访问不受信任的公网站点。若你的服务使用受信任的正规证书，把该常量改为 `false` 即可恢复严格校验。
-
-### 文件上传与下载
-
-- 上传：`WebChromeClient.onShowFileChooser()` 唤起系统文件选择器，后台管理面板换图标 / 壁纸时可用。
-- 下载：`DownloadListener` 交给系统 `DownloadManager` 处理，并手动注入 `Cookie` 头，因此「备份导出」这类需要登录态的接口也能正常下载。
-
-## 自定义
-
-| 想改什么 | 改哪里 |
-|---|---|
-| 应用名称 | `app/src/main/res/values/strings.xml` 的 `app_name` |
-| 版本号 | `app/build.gradle` 的 `versionCode` / `versionName` |
-| 主题色 | `app/src/main/res/values/colors.xml` |
-| 图标 | 替换 `app/src/main/res/mipmap-*/` 下的 PNG，或改 `res/values/colors.xml` 中的 `ic_launcher_background` |
-| 包名 | `app/build.gradle` 的 `applicationId` 与 `namespace`，以及 `AndroidManifest.xml` |
-
-## 常见问题
-
-**打开是白屏？**
-先确认手机和服务器在同一网络、服务已启动。右上角菜单 →「修改服务器地址」可以改地址；菜单 →「用系统浏览器打开」可以快速验证地址本身是否可达。
-
-**提示证书错误？**
-程序默认已允许自签名证书。如果仍然失败，检查服务端是否强制跳转到了另一个端口或域名。
-
-**登录后一刷新就退出登录？**
-菜单 →「清除缓存与登录状态」后重新登录一次。反向代理的 Cookie 域配置不当时会出现这种情况。
-
-**能上架应用商店吗？**
-不能，也不必要。这是给自托管面板配套的自用外壳。
-
-## 更新记录
-
-### v1.2.14 (Latest)
-
-- **移除「自动切换内外网」功能**：删除该功能的全部代码、菜单项、
-  WiFi SSID 配置弹窗、相关注入脚本与 `ACCESS_NETWORK_STATE` /
-  `ACCESS_WIFI_STATE` 权限。
-- **修复电脑模式下打开部分外部网站直接崩溃**（如 `https://www.jying.top`
-  弹出「页面遇到意外问题，可以点击"重新加载"恢复」）：电脑模式拦截外部主文档时，
-  原先会把 WebView 的 `Accept-Encoding: gzip, deflate, br` 透传给服务器，
-  Cloudflare 等 CDN 因此返回 Brotli 压缩的 HTML，而 `HttpURLConnection`
-  不会自动解压 Brotli，压缩字节被当成明文交给 WebView → 主文档损坏、渲染进程崩溃。
-  现在显式只协商 `identity` 原文，另对 gzip / deflate 做魔数兜底解压，
-  并在转发响应头时剔除 `Content-Encoding` / `Content-Length` /
-  `Transfer-Encoding`；万一仍收到无法解码的编码（br / zstd），
-  自动放弃拦截、交给 WebView 原生网络栈加载。
-- **渲染进程崩溃自动恢复**：新增 `onRenderProcessGone` 兜底，
-  渲染进程意外终止时自动重建 WebView 并恢复崩溃前页面；
-  同一页面短时间内连续崩溃超过两次则停止自动重载，显示错误页由用户手动处理。
-
-### v1.2.12
-
-- **修复黑屏**：`fetchAndStripViewport` 拦截外部页面主文档时，复制响应头漏掉了
-  `Content-Encoding` / `Content-Length` 过滤——`HttpURLConnection` 已自动解压 gzip body，
-  但响应头仍带 `Content-Encoding: gzip`，WebView 收到后尝试二次 gunzip 失败 → 页面黑屏
-  （如 `https://eb302.qc817.top:5786`）。改为跳过这两个头。
-- **屏幕比例切换**：菜单新增「切换为手机模式 / 切换为电脑模式」。
-  手机模式用移动 UA + 保留 viewport meta（按 device-width 渲染）；
-  电脑模式用桌面 UA + 网络层删 viewport（980px 桌面宽）。
-
-### v1.2.11
-
-- **修复外部站点 POST 登录失败**：`shouldInterceptRequest` 拦截所有主文档请求后
-  `fetchAndStripViewport` 强制 `setRequestMethod("GET")`，把表单登录的 POST 转成 GET，
-  body 中的用户名密码被丢弃，服务器收不到凭据返回原登录页——表现为
-  "点登录后页面刷新一遍但登不上"。改为只拦截 GET，POST 等带 body 的请求放行给 WebView。
-- **移除下拉刷新**：删除 `SwipeRefreshLayout`（布局 / Java / 依赖三处），
-  顶栏自动收放的 `translationY` 改为直接作用于 `WebView`。
-
-### v1.2.10
-
-- 在 v1.2.09 网络层拦截删除 viewport 方案基础上的稳定版本。
-  网络层拦截外部页面主文档 HTML，正则移除 viewport meta，实现桌面版网站模式。
-
-### v1.2.0
-
-- 适配上游面板 v2.1.00：面板新增 PWA（Service Worker + Cache Storage 离线缓存）。
-  「清除缓存与登录状态」现在会同步注销面板注册的 Service Worker 并清空其离线缓存，
-  避免清除之后离线缓存仍然残留；断网时的兜底页由面板自带的 `offline.html` 承担。
-
-### v1.1.0
-
-- 新增：顶栏随滚动自动收放——往下滑收起，往上滑或回到顶部自动出现。
-- 新增：进入服务页面后顶栏出现 `✕`，一键回到面板首页。
-- 顶栏改为覆盖式图层，收起时网页可视区域更大，且不会触发网页重排。
-
-### v1.0.0
-
-- 首个版本：WebView 外壳、全内嵌、填写服务器地址、上传 / 下载支持、在线构建。
-
-## 许可
-
-随便用，出问题不负责
+- 面板本体：[Ozero-top/Solar-Panel](https://github.com/Ozero-top/Solar-Panel)
+- 早期 WebView 套壳版本：[qiancheng817/Solarpanel-app](https://github.com/qiancheng817/Solarpanel-app)

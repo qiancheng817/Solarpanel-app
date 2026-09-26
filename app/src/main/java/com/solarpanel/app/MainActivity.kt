@@ -1,0 +1,1439 @@
+package com.solarpanel.app
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.DownloadManager
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.net.Uri
+import android.net.http.SslError
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.text.InputType
+import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.webkit.CookieManager
+import android.webkit.HttpAuthHandler
+import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
+import android.webkit.URLUtil
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebStorage
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnPreDraw
+import androidx.core.view.isVisible
+import androidx.core.view.updatePadding
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.solarpanel.app.databinding.ActivityMainBinding
+import com.solarpanel.app.databinding.SheetActionsBinding
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.LinkedHashMap
+import java.util.Locale
+import java.util.zip.GZIPInputStream
+import java.util.zip.Inflater
+import java.util.zip.InflaterInputStream
+
+/**
+ * solarpanel 原生安卓客户端。
+ *
+ * 为自托管 solarpanel 导航面板打造的原生 WebView 容器：
+ * 1. 页面内的 http/https 链接一律在当前 WebView 内打开，不跳转外部浏览器；
+ * 2. 首次启动要求填写服务器地址，可在顶栏菜单中随时修改；
+ * 3. 允许明文 HTTP 与自签名证书，以适配局域网 / NAS 自托管环境；
+ * 4. 支持后台管理面板所需的文件上传与文件下载（自动带登录 Cookie）；
+ * 5. 系统返回键 / 边缘手势优先回退网页历史，根页面二次确认退出；
+ * 6. 全面屏边到边：顶栏不与状态栏重叠，网页底部避开导航栏 / 手势条；
+ * 7. 适配面板 PWA：清除数据时同步注销 Service Worker 并清空离线缓存。
+ */
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var webView: WebView
+
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var userAgent: String = ""
+
+    private var mainFrameFailed = false
+    private var sslWarningShown = false
+    private var lastBackPressedAt = 0L
+
+    /** 等待 Service Worker 清理完成后继续执行的回调；仅在 clearWebData 过程中非 null。 */
+    private var swCleanupContinuation: Runnable? = null
+    private val swCleanupHandler = Handler(Looper.getMainLooper())
+    private val swCleanupTimeoutRunnable = Runnable {
+        swCleanupContinuation?.let {
+            swCleanupContinuation = null
+            it.run()
+        }
+    }
+
+    /** Android 13+ 请求通知权限的 launcher；下载完成通知依赖该权限。 */
+    private var pendingDownload: Runnable? = null
+
+    /** 顶栏实测高度（含状态栏 inset，首次布局后取得）。 */
+    private var topBarHeight = 0
+    private var topBarHidden = false
+    private var topBarSettled = false
+
+    /** 渲染进程崩溃自动恢复计数：同一页面短时间连续崩溃超过上限就停止自动重载。 */
+    private var lastRendererCrashedUrl: String? = null
+    private var rendererCrashCount = 0
+    private var firstRendererCrashAt = 0L
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val task = pendingDownload
+            pendingDownload = null
+            if (task != null) {
+                if (!granted) {
+                    toast(R.string.toast_notification_denied)
+                }
+                task.run()
+            }
+        }
+
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            filePathCallback?.onReceiveValue(
+                WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+            )
+            filePathCallback = null
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // 边到边布局：系统栏区域由各容器自行通过 inset 处理，
+        // 保证顶栏不与手机状态栏重叠、网页不被导航栏永久遮挡。
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        webView = binding.webView
+        setContentView(binding.root)
+
+        configureInsets()
+        configureWebView()
+        configureWebChromeClient()
+        configureWebViewClient()
+        configureDownloadListener()
+        configureToolbar()
+        configureTopBar()
+        configureScrollHiding()
+        configureBackHandling()
+        configureSetupPanel()
+        configureEdgeSwipe()
+
+        val savedServer = Prefs.getServer(this)
+        if (savedServer.isEmpty()) {
+            showSetupPanel("")
+        } else {
+            loadServer(savedServer)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 系统栏 inset 适配
+    // ------------------------------------------------------------------
+
+    private fun configureInsets() {
+        // 白底顶栏：状态栏图标用深色（深色模式下仍用浅色图标），与顶栏融为一体
+        val nightMode =
+            resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        WindowCompat.getInsetsController(window, binding.root)
+            .isAppearanceLightStatusBars = nightMode != Configuration.UI_MODE_NIGHT_YES
+
+        // 顶栏顶部补出状态栏高度：工具栏内容永远在状态栏下方
+        ViewCompat.setOnApplyWindowInsetsListener(binding.topBar) { view, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            view.updatePadding(top = top)
+            insets
+        }
+
+        // 配置页：四周补出系统栏（含横屏刘海 / 手势条）
+        ViewCompat.setOnApplyWindowInsetsListener(binding.setupPanel) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(
+                left = bars.left,
+                top = bars.top,
+                right = bars.right,
+                bottom = bars.bottom
+            )
+            insets
+        }
+
+        // 错误页：只补上下，保留左右 32dp 设计边距
+        ViewCompat.setOnApplyWindowInsetsListener(binding.errorPanel) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(top = bars.top, bottom = bars.bottom)
+            insets
+        }
+
+        // 网页底部避开三键导航栏 / 手势条
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val bottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            (webView.layoutParams as FrameLayout.LayoutParams).bottomMargin = bottom
+            insets
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // WebView 配置
+    // ------------------------------------------------------------------
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebView() {
+        val settings = webView.settings
+
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.javaScriptCanOpenWindowsAutomatically = true
+
+        // 关键：关闭多窗口，使 target="_blank" / window.open() 的链接
+        // 留在当前 WebView 中打开，而不是弹到系统浏览器。
+        settings.setSupportMultipleWindows(false)
+
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+        settings.textZoom = 100 // 锁定系统字体放缩，防止面板卡片布局错乱
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+
+        // 站点全部来自远程，不需要本地文件访问能力
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
+
+        // desktop 模式用桌面 UA（不含 Mobile）；mobile 模式用移动 UA
+        applyUserAgent()
+
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+        webView.setBackgroundColor(ContextCompat.getColor(this, R.color.app_background))
+        WebView.setWebContentsDebuggingEnabled(false)
+
+        // 暴露给网页的最小接口：上报滚动方向、异步清理完成事件
+        webView.addJavascriptInterface(ScrollBridge(), "SolarpanelHost")
+    }
+
+    /**
+     * 根据 Prefs 中的 display_mode 设置 User-Agent。
+     * desktop：桌面 UA（不含 Mobile），配合 shouldInterceptRequest 删 viewport → 桌面宽渲染
+     * mobile：移动 UA（含 Mobile），不拦截 → 按 device-width 渲染
+     */
+    private fun applyUserAgent() {
+        val mobile = Prefs.getDisplayMode(this) == "mobile"
+        userAgent = if (mobile) {
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/126.0.6478.126 Mobile Safari/537.36 " +
+                "SolarpanelAndroid/" + BuildConfig.VERSION_NAME
+        } else {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/126.0.6478.126 Safari/537.36 " +
+                "SolarpanelAndroid/" + BuildConfig.VERSION_NAME
+        }
+        webView.settings.userAgentString = userAgent
+    }
+
+    private fun configureWebChromeClient() {
+        webView.webChromeClient = object : WebChromeClient() {
+
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                if (newProgress >= 100) {
+                    binding.progressBar.visibility = View.GONE
+                } else {
+                    binding.progressBar.progress = newProgress
+                    if (binding.progressBar.visibility != View.VISIBLE) {
+                        binding.progressBar.visibility = View.VISIBLE
+                    }
+                }
+            }
+
+            override fun onReceivedTitle(view: WebView, title: String?) {
+                binding.toolbar.subtitle = if (title.isNullOrEmpty()) null else title
+            }
+
+            override fun onShowFileChooser(
+                view: WebView,
+                callback: ValueCallback<Array<Uri>>,
+                params: FileChooserParams
+            ): Boolean {
+                // 后台管理面板的图标 / 壁纸上传依赖这里
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = callback
+                return try {
+                    fileChooserLauncher.launch(params.createIntent())
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    filePathCallback = null
+                    false
+                }
+            }
+        }
+    }
+
+    private fun configureWebViewClient() {
+        webView.webViewClient = object : WebViewClient() {
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean = handleUri(request.url)
+
+            @Suppress("DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+                handleUri(Uri.parse(url))
+
+            /**
+             * 网络层拦截：对外部页面（非 solarpanel 自己）的 GET 主文档 HTML，
+             * 抓取后删除 <meta name="viewport">，实现 Chrome「桌面版网站」模式。
+             * 渲染引擎从第一帧开始就看不到 viewport meta，用默认 ~980px 桌面宽渲染，
+             * 再配合 wideViewPort + overviewMode 自动等比缩小到手机屏幕。
+             */
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                if (!request.isForMainFrame) {
+                    return null // 只拦主文档，子资源放行
+                }
+                if (Prefs.getDisplayMode(this@MainActivity) == "mobile") {
+                    return null // 手机模式保留 viewport meta
+                }
+                if (!request.method.equals("GET", ignoreCase = true)) {
+                    return null // POST 等带 body 的请求必须交给 WebView 原生处理
+                }
+                val uri = request.url
+                val scheme = uri.scheme
+                if (scheme != "http" && scheme != "https") {
+                    return null
+                }
+                // solarpanel 自己的面板保留 viewport meta
+                val server = Prefs.getServer(this@MainActivity)
+                if (server.isNotEmpty()) {
+                    val serverHost = Uri.parse(server).host
+                    if (serverHost != null && serverHost.equals(uri.host, ignoreCase = true)) {
+                        return null
+                    }
+                }
+                return try {
+                    fetchAndStripViewport(request)
+                } catch (e: Exception) {
+                    null // 拦截失败就让 WebView 自己加载
+                }
+            }
+
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                mainFrameFailed = false
+                // 每次新页面加载时重置缩放状态：setInitialScale(0) 让 WebView 配合
+                // overviewMode 自动计算"整页塞进屏幕"的缩放比例，桌面网页布局完整保留。
+                view.setInitialScale(0)
+                // 新页面开始加载时先把顶栏放出来
+                applyTopBarState(hide = false, animate = true)
+            }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                if (!mainFrameFailed) {
+                    hideErrorPanel()
+                }
+                injectPanelCssFix()
+                updateCloseButton()
+            }
+
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次
+                injectPanelCssFix()
+                updateCloseButton()
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError
+            ) {
+                if (request.isForMainFrame) {
+                    mainFrameFailed = true
+                    showErrorPanel()
+                }
+            }
+
+            override fun onReceivedSslError(
+                view: WebView,
+                handler: SslErrorHandler,
+                error: SslError
+            ) {
+                if (ALLOW_SELF_SIGNED_CERTIFICATE) {
+                    handler.proceed()
+                    if (!sslWarningShown) {
+                        sslWarningShown = true
+                        toast(R.string.toast_ssl_warning)
+                    }
+                } else {
+                    handler.cancel()
+                }
+            }
+
+            override fun onReceivedHttpAuthRequest(
+                view: WebView,
+                handler: HttpAuthHandler,
+                host: String,
+                realm: String
+            ) {
+                // 兼容 Nginx 反代上常见的 HTTP Basic 认证
+                showHttpAuthDialog(handler, host, realm)
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: RenderProcessGoneDetail
+            ): Boolean {
+                // 渲染进程被杀 / 崩溃时必须销毁重建 WebView 并恢复页面；
+                // 返回 true 阻止应用进程跟着崩溃。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    handleRenderProcessGone(view)
+                }
+                return true
+            }
+        }
+    }
+
+    private fun configureDownloadListener() {
+        webView.setDownloadListener { url, userAgentHeader, contentDisposition, mimeType, _ ->
+            enqueueDownload(url, userAgentHeader, contentDisposition, mimeType)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 顶栏 / 底部操作面板
+    // ------------------------------------------------------------------
+
+    private fun configureToolbar() {
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_close -> {
+                    goHome()
+                    true
+                }
+                R.id.action_menu -> {
+                    showActionsSheet()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    /** 打开手机习惯的底部操作面板。 */
+    private fun showActionsSheet() {
+        val dialog = BottomSheetDialog(this)
+        val sheetBinding = SheetActionsBinding.inflate(layoutInflater)
+
+        // 显示模式切换项：文案 / 图标表示"将要切到的模式"
+        val mobile = Prefs.getDisplayMode(this) == "mobile"
+        sheetBinding.toggleIcon.setImageResource(
+            if (mobile) R.drawable.ic_desktop_windows else R.drawable.ic_smartphone
+        )
+        sheetBinding.toggleText.setText(
+            if (mobile) R.string.menu_toggle_display_to_desktop
+            else R.string.menu_toggle_display_to_mobile
+        )
+
+        // 内外网切换项：仅面板页面存在 #lanBtn 时显示，副标题反映当前模式
+        sheetBinding.rowLan.isVisible = false
+        webView.evaluateJavascript(
+            "(function(){var b=document.getElementById('lanBtn');" +
+                "if(!b){return 'none';}" +
+                "return localStorage.getItem('sp_lan_mode')==='lan'?'lan':'wan';})();"
+        ) { result ->
+            val mode = result?.removeSurrounding("\"")
+            if (mode == "lan" || mode == "wan") {
+                sheetBinding.lanHint.setText(
+                    if (mode == "lan") R.string.menu_lan_lan_hint
+                    else R.string.menu_lan_wan_hint
+                )
+                sheetBinding.rowLan.isVisible = true
+            }
+        }
+
+        sheetBinding.rowRefresh.setOnClickListener {
+            dialog.dismiss()
+            if (webView.url != null) webView.reload()
+        }
+        sheetBinding.rowToggleDisplay.setOnClickListener {
+            dialog.dismiss()
+            toggleDisplayMode()
+        }
+        sheetBinding.rowLan.setOnClickListener {
+            // 直接触发面板原切换逻辑（更新卡片地址模式、localStorage 与提示）
+            webView.evaluateJavascript(
+                "var b=document.getElementById('lanBtn');if(b){b.click();}", null
+            )
+            dialog.dismiss()
+        }
+        sheetBinding.rowChangeServer.setOnClickListener {
+            dialog.dismiss()
+            showSetupPanel(Prefs.getServer(this))
+        }
+        sheetBinding.rowClearData.setOnClickListener {
+            dialog.dismiss()
+            confirmClearWebData()
+        }
+        sheetBinding.rowOpenBrowser.setOnClickListener {
+            dialog.dismiss()
+            openInSystemBrowser()
+        }
+        sheetBinding.rowAbout.setOnClickListener {
+            dialog.dismiss()
+            showAboutDialog()
+        }
+
+        dialog.setContentView(sheetBinding.root)
+        dialog.show()
+    }
+
+    /**
+     * 顶栏（含进度条）覆盖在网页之上，网页整体被顶栏高度向下推一段，
+     * 网页顶部不会被顶栏遮挡；顶栏收起时位移归零，不触发 WebView 重新布局。
+     */
+    private fun configureTopBar() {
+        binding.topBar.doOnPreDraw {
+            topBarHeight = binding.topBar.height
+            applyTopBarState(hide = false, animate = false)
+        }
+    }
+
+    private fun configureScrollHiding() {
+        // 顶栏固定显示，不随滚动收起：不再安装触摸方向兜底监听。
+        // （网页滚动仍由注入的 JS 上报，但收起请求在 applyTopBarState 被拒绝。）
+    }
+
+    /**
+     * 收起或展开顶栏。当前产品决策为**顶栏固定**，因此一切 hide=true
+     * 请求直接拒绝，保证 JS 上报 / 历史调用路径都无法收起顶栏。
+     *
+     * @param hide true 收起（被忽略），false 展开
+     * @param animate 是否播放动画
+     */
+    private fun applyTopBarState(hide: Boolean, animate: Boolean) {
+        if (hide) {
+            return
+        }
+        if (topBarHeight <= 0) {
+            return
+        }
+        val barTarget = if (hide) -topBarHeight.toFloat() else 0f
+        val contentTarget = if (hide) 0f else topBarHeight.toFloat()
+
+        if (!topBarSettled) {
+            topBarSettled = true
+            topBarHidden = hide
+            binding.topBar.translationY = barTarget
+            webView.translationY = contentTarget
+            return
+        }
+        if (topBarHidden == hide) {
+            return
+        }
+        topBarHidden = hide
+
+        if (!animate) {
+            binding.topBar.translationY = barTarget
+            webView.translationY = contentTarget
+            return
+        }
+        binding.topBar.animate().cancel()
+        webView.animate().cancel()
+        binding.topBar.animate()
+            .translationY(barTarget)
+            .setDuration(TOP_BAR_ANIM_MS)
+            .start()
+        webView.animate()
+            .translationY(contentTarget)
+            .setDuration(TOP_BAR_ANIM_MS)
+            .start()
+    }
+
+    // ------------------------------------------------------------------
+    // 边缘滑动手势（后退 / 退出）
+    // ------------------------------------------------------------------
+
+    private fun configureEdgeSwipe() {
+        EdgeSwipeController(
+            activity = this,
+            zone = binding.edgeSwipeZone,
+            scrim = binding.swipeScrim,
+            arrow = binding.swipeArrow,
+            movableViews = {
+                listOf(webView, binding.topBar, binding.setupPanel, binding.errorPanel)
+            },
+            canGoBack = { webView.canGoBack() },
+            onBack = { webView.goBack() },
+            onPrepareExit = { requestExit() },
+            onExit = { finish() }
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // 渲染进程崩溃恢复
+    // ------------------------------------------------------------------
+
+    /**
+     * WebView 渲染进程意外终止时的兜底恢复。
+     * 已崩溃的实例不可再用，必须移除并 destroy，再新建实例恢复崩溃前 URL；
+     * 同一页面短时间窗口连续崩溃超过上限则停止自动重载，显示错误页由用户手动决定。
+     */
+    private fun handleRenderProcessGone(dead: WebView) {
+        val crashedUrl = dead.url
+        val now = SystemClock.elapsedRealtime()
+        if (crashedUrl == lastRendererCrashedUrl
+            && now - firstRendererCrashAt < RENDERER_CRASH_WINDOW_MS
+        ) {
+            rendererCrashCount++
+        } else {
+            lastRendererCrashedUrl = crashedUrl
+            rendererCrashCount = 1
+            firstRendererCrashAt = now
+        }
+
+        filePathCallback = null
+        recreateWebView(dead)
+
+        if (rendererCrashCount > MAX_RENDERER_AUTO_RECOVERIES) {
+            mainFrameFailed = true
+            showErrorPanel()
+            return
+        }
+
+        mainFrameFailed = false
+        hideErrorPanel()
+        if (!crashedUrl.isNullOrEmpty()) {
+            webView.loadUrl(crashedUrl)
+        } else {
+            val server = Prefs.getServer(this)
+            if (server.isNotEmpty()) {
+                webView.loadUrl(server)
+            } else {
+                showSetupPanel("")
+            }
+        }
+    }
+
+    /**
+     * 销毁已崩溃的 WebView 并在原位置创建全新实例，重新套用所有
+     * 与 WebView 实例绑定的配置；顶栏 / 配置页 / 错误页等共享视图、
+     * 菜单监听与返回键回调不受影响、不重复注册。
+     */
+    private fun recreateWebView(dead: WebView) {
+        val parent = dead.parent as? ViewGroup
+        var index = 0
+        if (parent != null) {
+            val oldIndex = parent.indexOfChild(dead)
+            if (oldIndex >= 0) {
+                index = oldIndex
+            }
+            parent.removeView(dead)
+        }
+        try {
+            dead.destroy()
+        } catch (ignored: Exception) {
+        }
+
+        val realParent = parent ?: findViewById<ViewGroup>(R.id.root)
+        val fresh = WebView(this)
+        fresh.id = R.id.webView
+        val layoutParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        // 保留崩溃前底部导航栏间距
+        layoutParams.bottomMargin =
+            (webView.layoutParams as? FrameLayout.LayoutParams)?.bottomMargin ?: 0
+        realParent.addView(fresh, index, layoutParams)
+        webView = fresh
+
+        // 按崩溃前的顶栏状态就位
+        fresh.translationY = if (topBarHeight > 0 && !topBarHidden) topBarHeight.toFloat() else 0f
+
+        configureWebView()
+        configureWebChromeClient()
+        configureWebViewClient()
+        configureDownloadListener()
+        configureScrollHiding()
+    }
+
+    // ------------------------------------------------------------------
+    // 桌面版网站：viewport 剥离
+    // ------------------------------------------------------------------
+
+    /**
+     * 自己发起 HTTP 请求拿到 HTML，正则删除所有 viewport meta 后返回。
+     *
+     * 压缩处理（关键）：显式只协商 identity 原文，避免 Cloudflare 等 CDN 返回
+     * HttpURLConnection 无法解压的 Brotli 导致文档损坏；另按魔数兜底 gzip/deflate；
+     * 万一仍收到 br/zstd，放弃拦截交回 WebView 原生网络栈加载。
+     */
+    @Throws(IOException::class)
+    private fun fetchAndStripViewport(request: WebResourceRequest): WebResourceResponse {
+        val url = URL(request.url.toString())
+        val conn = url.openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "GET"
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("User-Agent", userAgent)
+            conn.setRequestProperty(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            conn.setRequestProperty("Accept-Encoding", "identity")
+
+            CookieManager.getInstance().getCookie(url.toString())?.takeIf { it.isNotEmpty() }
+                ?.let { conn.setRequestProperty("Cookie", it) }
+
+            for ((key, value) in request.requestHeaders) {
+                if (!key.equals("User-Agent", ignoreCase = true)
+                    && !key.equals("Cookie", ignoreCase = true)
+                    && !key.equals("Host", ignoreCase = true)
+                    && !key.equals("Connection", ignoreCase = true)
+                    && !key.equals("Accept-Encoding", ignoreCase = true)
+                ) {
+                    conn.setRequestProperty(key, value)
+                }
+            }
+
+            val code = conn.responseCode
+            val input: InputStream =
+                (if (code in 200..399) conn.inputStream else conn.errorStream)
+                    ?: conn.inputStream
+
+            val raw = readDecodedBody(input, conn.contentEncoding)
+            var html = String(raw, StandardCharsets.UTF_8)
+
+            html = VIEWPORT_META_REGEX_1.replace(html, "")
+            html = VIEWPORT_META_REGEX_2.replace(html, "")
+
+            var mimeType = "text/html"
+            var encoding = "utf-8"
+            conn.contentType?.let { contentType ->
+                val semi = contentType.indexOf(';')
+                if (semi > 0) {
+                    mimeType = contentType.substring(0, semi).trim()
+                    val charsetPos = contentType.indexOf("charset=", semi + 1)
+                    if (charsetPos >= 0) {
+                        encoding = contentType.substring(charsetPos + 8).trim()
+                    }
+                } else {
+                    mimeType = contentType.trim()
+                }
+            }
+
+            // body 已重新编码，原始传输 / 编码 / 长度头必须剔除，
+            // 否则 WebView 会二次解压 / 按旧长度处理导致黑屏。
+            val responseHeaders = LinkedHashMap<String, String>()
+            for ((headerKey, values) in conn.headerFields) {
+                if (headerKey == null || values.isNullOrEmpty()) {
+                    continue
+                }
+                if (headerKey.equals("Content-Encoding", ignoreCase = true)
+                    || headerKey.equals("Content-Length", ignoreCase = true)
+                    || headerKey.equals("Transfer-Encoding", ignoreCase = true)
+                ) {
+                    continue
+                }
+                responseHeaders[headerKey] = values[0]
+            }
+
+            val body = ByteArrayInputStream(html.toByteArray(StandardCharsets.UTF_8))
+            return WebResourceResponse(
+                mimeType, encoding, code, conn.responseMessage, responseHeaders, body
+            )
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * 读取主文档响应体并按实际压缩情况解压：
+     * - 声明 br/zstd 等无法解码的编码：抛异常，外层放弃拦截；
+     * - gzip/zlib 按魔数判断，兼容服务器不按声明出牌；
+     * - 声明 deflate 但无 zlib 头时按 raw deflate 兜底。
+     */
+    @Throws(IOException::class)
+    private fun readDecodedBody(input: InputStream, contentEncoding: String?): ByteArray {
+        val enc = contentEncoding?.trim()?.lowercase(Locale.ROOT) ?: ""
+        enc.split(",").map { it.trim() }.forEach { token ->
+            if (token == "br" || token == "brotli"
+                || token == "zstd" || token == "zst"
+                || token == "compress" || token == "x-compress"
+            ) {
+                throw IOException("Unsupported Content-Encoding, fallback to native load: $enc")
+            }
+        }
+
+        val raw = readAllBytes(input)
+
+        // gzip 魔数 1F 8B
+        if (raw.size >= 2 && (raw[0].toInt() and 0xFF) == 0x1F
+            && (raw[1].toInt() and 0xFF) == 0x8B
+        ) {
+            GZIPInputStream(ByteArrayInputStream(raw)).use { gis ->
+                return readAllBytes(gis)
+            }
+        }
+        // zlib 头：CM=8 且 (CMF*256+FLG) 能被 31 整除
+        if (raw.size >= 2 && (raw[0].toInt() and 0x0F) == 0x08) {
+            val header = ((raw[0].toInt() and 0xFF) shl 8) or (raw[1].toInt() and 0xFF)
+            if (header % 31 == 0) {
+                return inflateBody(raw, rawDeflate = false)
+            }
+        }
+        if (enc == "deflate") {
+            return inflateBody(raw, rawDeflate = true)
+        }
+        return raw
+    }
+
+    /** zlib（rawDeflate=false）或 raw deflate（rawDeflate=true）解压。 */
+    @Throws(IOException::class)
+    private fun inflateBody(data: ByteArray, rawDeflate: Boolean): ByteArray {
+        val inflater = Inflater(rawDeflate)
+        InflaterInputStream(ByteArrayInputStream(data), inflater).use { iis ->
+            val baos = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = iis.read(buffer)
+                if (count == -1) break
+                baos.write(buffer, 0, count)
+            }
+            inflater.end()
+            return baos.toByteArray()
+        }
+    }
+
+    /** 读尽输入流（readAllBytes 需 API 33，minSdk 24 不支持）。 */
+    @Throws(IOException::class)
+    private fun readAllBytes(input: InputStream): ByteArray {
+        val baos = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count == -1) break
+            baos.write(buffer, 0, count)
+        }
+        return baos.toByteArray()
+    }
+
+    // ------------------------------------------------------------------
+    // JS 注入
+    // ------------------------------------------------------------------
+
+    /** 注入面板手机端适配样式，详见 PANEL_CSS_FIX_JS。 */
+    private fun injectPanelCssFix() {
+        webView.evaluateJavascript(PANEL_CSS_FIX_JS, null)
+    }
+
+    /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
+    private fun updateCloseButton() {
+        val home = Prefs.getServer(this)
+        val atHome = home.isNotEmpty() && Urls.isSamePage(webView.url, home)
+        binding.toolbar.menu.findItem(R.id.action_close)?.isVisible = !atHome
+    }
+
+    /** 切换桌面 / 手机屏幕比例模式，切换后重新加载当前页使 UA 与 viewport 策略生效。 */
+    private fun toggleDisplayMode() {
+        val toMobile = Prefs.getDisplayMode(this) == "desktop"
+        Prefs.setDisplayMode(this, if (toMobile) "mobile" else "desktop")
+        applyUserAgent()
+        Toast.makeText(
+            this,
+            if (toMobile) R.string.toast_display_mobile else R.string.toast_display_desktop,
+            Toast.LENGTH_SHORT
+        ).show()
+        if (webView.url != null) {
+            webView.reload()
+        }
+    }
+
+    /** 关闭当前服务页面，回到面板首页。 */
+    private fun goHome() {
+        val home = Prefs.getServer(this)
+        if (home.isEmpty()) {
+            showSetupPanel("")
+            return
+        }
+        if (Urls.isSamePage(webView.url, home)) {
+            return
+        }
+        applyTopBarState(hide = false, animate = true)
+        webView.loadUrl(home)
+    }
+
+    /** 暴露给网页的最小接口：PWA 缓存异步清理完成事件。 */
+    private inner class ScrollBridge {
+
+        @JavascriptInterface
+        fun onSwCleanupDone() {
+            runOnUiThread {
+                swCleanupHandler.removeCallbacksAndMessages(null)
+                val continuation = swCleanupContinuation
+                swCleanupContinuation = null
+                continuation?.run()
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 链接调度
+    // ------------------------------------------------------------------
+
+    /**
+     * @return true 表示已由本应用处理（不再交给 WebView），
+     * false 表示交给 WebView 在当前页面内加载。
+     */
+    private fun handleUri(uri: Uri?): Boolean {
+        if (uri == null) {
+            return true
+        }
+        // 卡片链接可能写成 localhost / 127.0.0.1，重写成用户配置的服务器地址
+        val rewritten = Urls.rewriteLocalHost(uri, Prefs.getServer(this))
+        if (rewritten != null) {
+            webView.loadUrl(rewritten.toString())
+            return true
+        }
+        val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+
+        return when (scheme) {
+            "http", "https", "about", "data", "blob", "javascript" -> false
+            "intent" -> startAndroidIntent(uri)
+            "tel", "mailto", "sms", "smsto", "geo", "market",
+            "weixin", "alipays", "taobao" -> startExternal(uri)
+            else -> startExternal(uri)
+        }
+    }
+
+    private fun startExternal(uri: Uri): Boolean {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, uri)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            toast(R.string.toast_no_browser)
+        }
+        return true
+    }
+
+    private fun startAndroidIntent(uri: Uri): Boolean {
+        try {
+            val intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            toast(R.string.toast_no_browser)
+        }
+        return true
+    }
+
+    // ------------------------------------------------------------------
+    // 服务器地址
+    // ------------------------------------------------------------------
+
+    private fun configureSetupPanel() {
+        binding.connectButton.setOnClickListener { applyServerInput() }
+        binding.serverInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO
+                || actionId == EditorInfo.IME_ACTION_DONE
+                || actionId == EditorInfo.IME_ACTION_SEND
+            ) {
+                applyServerInput()
+                true
+            } else {
+                false
+            }
+        }
+
+        binding.errorRetryButton.setOnClickListener {
+            hideErrorPanel()
+            val server = Prefs.getServer(this)
+            when {
+                server.isEmpty() -> showSetupPanel("")
+                webView.url != null -> webView.reload()
+                else -> webView.loadUrl(server)
+            }
+        }
+        binding.errorChangeButton.setOnClickListener {
+            showSetupPanel(Prefs.getServer(this))
+        }
+    }
+
+    private fun applyServerInput() {
+        val normalized = Urls.normalize(binding.serverInput.text?.toString() ?: "")
+        if (normalized == null) {
+            binding.serverInputLayout.error = getString(R.string.toast_url_invalid)
+            return
+        }
+        binding.serverInputLayout.error = null
+        Prefs.setServer(this, normalized)
+        toast(R.string.toast_url_saved)
+
+        webView.stopLoading()
+        webView.clearHistory()
+        loadServer(normalized)
+    }
+
+    private fun loadServer(url: String) {
+        hideSetupPanel()
+        hideErrorPanel()
+        mainFrameFailed = false
+        sslWarningShown = false
+        webView.loadUrl(url)
+    }
+
+    private fun showSetupPanel(prefill: String) {
+        binding.setupPanel.visibility = View.VISIBLE
+        binding.errorPanel.visibility = View.GONE
+        binding.serverInput.setText(prefill)
+        binding.serverInput.setSelection(binding.serverInput.text?.length ?: 0)
+        binding.serverInputLayout.error = null
+        binding.serverInput.requestFocus()
+    }
+
+    private fun hideSetupPanel() {
+        binding.setupPanel.visibility = View.GONE
+        currentFocus?.let { focused ->
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(focused.windowToken, 0)
+        }
+    }
+
+    private fun showErrorPanel() {
+        binding.errorPanel.visibility = View.VISIBLE
+        binding.progressBar.visibility = View.GONE
+    }
+
+    private fun hideErrorPanel() {
+        binding.errorPanel.visibility = View.GONE
+    }
+
+    // ------------------------------------------------------------------
+    // 下载
+    // ------------------------------------------------------------------
+
+    private fun enqueueDownload(
+        url: String,
+        userAgentHeader: String,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        // Android 13+ 需要 POST_NOTIFICATIONS 权限才能显示下载完成通知
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val state = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            )
+            if (state != PackageManager.PERMISSION_GRANTED) {
+                if (pendingDownload != null) {
+                    return
+                }
+                pendingDownload = Runnable {
+                    doEnqueueDownload(url, userAgentHeader, contentDisposition, mimeType)
+                }
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+        }
+        doEnqueueDownload(url, userAgentHeader, contentDisposition, mimeType)
+    }
+
+    private fun doEnqueueDownload(
+        url: String,
+        userAgentHeader: String,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        try {
+            var downloadUri = Uri.parse(url)
+            val serverUrl = Prefs.getServer(this)
+            Urls.rewriteLocalHost(downloadUri, serverUrl)?.let {
+                downloadUri = it
+            }
+            val finalUrl = downloadUri.toString()
+
+            val fileName = URLUtil.guessFileName(finalUrl, contentDisposition, mimeType)
+
+            val request = DownloadManager.Request(downloadUri)
+            request.setMimeType(mimeType)
+            request.setTitle(fileName)
+            request.setDescription(finalUrl)
+            request.setNotificationVisibility(
+                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            )
+            request.setAllowedOverMetered(true)
+            request.setAllowedOverRoaming(true)
+
+            // 备份导出等接口需要登录态：DownloadManager 不共享 WebView CookieJar，手动注入；
+            // 同时把面板域名 Cookie 一并带上，兼容下载重定向到另一个域名的情况。
+            val cookieManager = CookieManager.getInstance()
+            val cookieHeader = StringBuilder()
+            val downloadCookie = cookieManager.getCookie(finalUrl)
+            if (!downloadCookie.isNullOrEmpty()) {
+                cookieHeader.append(downloadCookie)
+            }
+            if (serverUrl.isNotEmpty()) {
+                val serverCookie = cookieManager.getCookie(serverUrl)
+                if (!serverCookie.isNullOrEmpty() && serverCookie != downloadCookie) {
+                    if (cookieHeader.isNotEmpty()) {
+                        cookieHeader.append("; ")
+                    }
+                    cookieHeader.append(serverCookie)
+                }
+            }
+            if (cookieHeader.isNotEmpty()) {
+                request.addRequestHeader("Cookie", cookieHeader.toString())
+            }
+            if (!userAgentHeader.isNullOrEmpty()) {
+                request.addRequestHeader("User-Agent", userAgentHeader)
+            }
+
+            try {
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            } catch (e: Exception) {
+                request.setDestinationInExternalFilesDir(
+                    this, Environment.DIRECTORY_DOWNLOADS, fileName
+                )
+            }
+
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                ?: throw IllegalStateException("DownloadManager unavailable")
+            manager.enqueue(request)
+            toast(R.string.toast_download_start)
+        } catch (e: Exception) {
+            toast(R.string.toast_download_fail)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 菜单动作
+    // ------------------------------------------------------------------
+
+    private fun confirmClearWebData() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.clear_data_title)
+            .setMessage(R.string.clear_data_message)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_ok) { _, _ -> clearWebData() }
+            .show()
+    }
+
+    private fun clearWebData() {
+        // Service Worker + Cache Storage 不属于 Cookie / HTTP 缓存 / DOM 存储，
+        // 先注入脚本异步清理，Promise.all 完成回调后再执行其余清理。
+        swCleanupContinuation = Runnable {
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.removeAllCookies(null)
+            cookieManager.flush()
+
+            webView.clearCache(true)
+            webView.clearHistory()
+            webView.clearFormData()
+
+            WebStorage.getInstance().deleteAllData()
+
+            toast(R.string.toast_cleared)
+            val server = Prefs.getServer(this)
+            if (server.isNotEmpty()) {
+                webView.loadUrl(server)
+            }
+        }
+        webView.evaluateJavascript(PANEL_SW_CLEANUP_JS, null)
+
+        // 3 秒超时兜底
+        swCleanupHandler.postDelayed(swCleanupTimeoutRunnable, 3000L)
+    }
+
+    private fun openInSystemBrowser() {
+        var url = webView.url
+        if (url.isNullOrEmpty()) {
+            url = Prefs.getServer(this)
+        }
+        if (url.isNullOrEmpty()) {
+            return
+        }
+        startExternal(Uri.parse(url))
+    }
+
+    private fun showAboutDialog() {
+        var server = Prefs.getServer(this)
+        if (server.isEmpty()) {
+            server = getString(R.string.about_no_server)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.about_title)
+            .setMessage(getString(R.string.about_message, BuildConfig.VERSION_NAME, server))
+            .setPositiveButton(R.string.dialog_ok, null)
+            .show()
+    }
+
+    private fun showHttpAuthDialog(handler: HttpAuthHandler, host: String, realm: String?) {
+        val container = LinearLayout(this)
+        container.orientation = LinearLayout.VERTICAL
+        val padding = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 24f, resources.displayMetrics
+        ).toInt()
+        container.setPadding(padding, padding / 2, padding, 0)
+
+        val username = EditText(this)
+        username.setHint(R.string.auth_username)
+        username.inputType = InputType.TYPE_CLASS_TEXT
+        container.addView(
+            username,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val password = EditText(this)
+        password.setHint(R.string.auth_password)
+        password.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        container.addView(
+            password,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle(if (realm.isNullOrEmpty()) host else realm)
+            .setView(container)
+            .setCancelable(false)
+            .setNegativeButton(R.string.dialog_cancel) { _, _ -> handler.cancel() }
+            .setPositiveButton(R.string.dialog_ok) { _, _ ->
+                handler.proceed(username.text.toString(), password.text.toString())
+            }
+            .show()
+    }
+
+    // ------------------------------------------------------------------
+    // 返回 / 退出
+    // ------------------------------------------------------------------
+
+    private fun configureBackHandling() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.errorPanel.visibility == View.VISIBLE) {
+                    hideErrorPanel()
+                    return
+                }
+                if (binding.setupPanel.visibility == View.VISIBLE) {
+                    if (Prefs.getServer(this@MainActivity).isNotEmpty()) {
+                        hideSetupPanel()
+                    } else {
+                        attemptExit()
+                    }
+                    return
+                }
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                    return
+                }
+                attemptExit()
+            }
+        })
+    }
+
+    /**
+     * 退出二次确认：首次只记录时间并提示，2 秒内再次调用返回 true。
+     * 系统返回键与边缘滑动手势共用。
+     */
+    private fun requestExit(): Boolean {
+        val now = System.currentTimeMillis()
+        return if (now - lastBackPressedAt < DOUBLE_BACK_INTERVAL_MS) {
+            true
+        } else {
+            lastBackPressedAt = now
+            toast(R.string.toast_exit_hint)
+            false
+        }
+    }
+
+    private fun attemptExit() {
+        if (requestExit()) {
+            finish()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 生命周期
+    // ------------------------------------------------------------------
+
+    override fun onPause() {
+        super.onPause()
+        if (this::webView.isInitialized) {
+            webView.onPause()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (this::webView.isInitialized) {
+            webView.onResume()
+        }
+    }
+
+    override fun onDestroy() {
+        filePathCallback?.onReceiveValue(null)
+        filePathCallback = null
+        swCleanupHandler.removeCallbacksAndMessages(null)
+        swCleanupContinuation = null
+        pendingDownload = null
+        if (this::webView.isInitialized) {
+            webView.stopLoading()
+            webView.removeAllViews()
+            webView.removeJavascriptInterface("SolarpanelHost")
+            webView.destroy()
+        }
+        super.onDestroy()
+    }
+
+    // ------------------------------------------------------------------
+    // 工具
+    // ------------------------------------------------------------------
+
+    private fun toast(resId: Int) {
+        Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
+    }
+
+    // ------------------------------------------------------------------
+    // 常量
+    // ------------------------------------------------------------------
+
+    companion object {
+
+        private const val DOUBLE_BACK_INTERVAL_MS = 2000L
+        private const val TOP_BAR_ANIM_MS = 180L
+
+        private const val MAX_RENDERER_AUTO_RECOVERIES = 2
+        private const val RENDERER_CRASH_WINDOW_MS = 30_000L
+
+        /**
+         * 自托管服务常使用自签名证书，严格校验会导致整站无法访问。
+         * 若使用受信任的正式证书，改为 false 可恢复严格校验。
+         */
+        private const val ALLOW_SELF_SIGNED_CERTIFICATE = true
+
+        /** 电脑模式下识别并删除 viewport meta 的两种写法。 */
+        private val VIEWPORT_META_REGEX_1 = Regex(
+            "<meta\\s+[^>]*name\\s*=\\s*[\"']viewport[\"'][^>]*/?>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val VIEWPORT_META_REGEX_2 = Regex(
+            "<meta\\s+[^>]*[\"']viewport[\"'][^>]*name\\s*=\\s*[\"'][^\"']+[\"'][^>]*/?>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        /**
+         * 面板手机端适配（幂等）：
+         * 1) 永久隐藏面板网页自带顶栏 .topbar（其滚动自动隐藏功能随之失效），
+         *    内外网切换已挪到原生底部操作面板；
+         * 2) 去掉页面顶部留白（content-pt 与时钟区上边距），收紧页面与分组边距、
+         *    缩小卡片图标与字号，让服务卡片在窄屏稳定排成两列（detail 风格）
+         *    或三列（app 小图标风格）；
+         * 3) 补 .group-head 的 flex-wrap，避免分组标题被挤成竖排。
+         */
+        private val PANEL_CSS_FIX_JS =
+            "(function(){" +
+                "if(document.getElementById('solarpanel-css-fix')){return;}" +
+                "var s=document.createElement('style');" +
+                "s.id='solarpanel-css-fix';" +
+                "s.textContent='" +
+                ".topbar{display:none !important;}" +
+                "@media (max-width:640px){" +
+                ".page{padding-top:0 !important;padding-left:10px;padding-right:10px;}" +
+                ".clock-area{margin:12px auto 12px !important;}" +
+                ".group{padding:13px 11px 14px;margin-bottom:12px;}" +
+                ".group-head{flex-wrap:wrap;gap:8px;margin-bottom:10px;}" +
+                ".group-head h2{flex:0 0 auto;font-size:16px;}" +
+                ".group-head .desc{min-width:0;font-size:12px;}" +
+                ".cards{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px;}" +
+                ".cards.style-app{grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;}" +
+                ".card{padding:10px;gap:9px;border-radius:15px;}" +
+                ".card .icon{width:42px;height:42px;border-radius:12px;font-size:17px;}" +
+                ".card .info .t{font-size:13px;}" +
+                ".card .info .d{font-size:11px;}" +
+                ".card.app-card{padding:12px 6px 10px;gap:7px;}" +
+                ".card.app-card .icon{width:50px;height:50px;border-radius:14px;}" +
+                ".card.app-card .info .t{font-size:12px;max-width:88px;}" +
+                "}';" +
+                "(document.head||document.documentElement).appendChild(s);" +
+                "})();"
+
+        /**
+         * 清除数据时执行：注销全部 Service Worker 注册并清空 Cache Storage，
+         * 完成后回调原生层。非安全上下文下各分支自动跳过。
+         */
+        private val PANEL_SW_CLEANUP_JS =
+            "(function(){" +
+                "var pending=[];" +
+                "try{" +
+                "if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations){" +
+                "pending.push(navigator.serviceWorker.getRegistrations().then(function(rs){" +
+                "rs.forEach(function(r){try{r.unregister();}catch(e){}});" +
+                "}).catch(function(){}));}" +
+                "if(window.caches&&caches.keys){" +
+                "pending.push(caches.keys().then(function(ks){" +
+                "ks.forEach(function(k){try{caches.delete(k);}catch(e){}});" +
+                "}).catch(function(){}));}" +
+                "}catch(e){}" +
+                "Promise.all(pending).then(function(){" +
+                "try{SolarpanelHost.onSwCleanupDone();}catch(e){}" +
+                "}).catch(function(){" +
+                "try{SolarpanelHost.onSwCleanupDone();}catch(e){}" +
+                "});" +
+                "})();"
+    }
+}

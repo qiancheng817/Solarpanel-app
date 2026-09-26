@@ -7,8 +7,9 @@
         <item name="colorSecondary">@color/brand_tan_dark</item>
         <item name="colorOnSecondary">@color/white</item>
         <item name="android:windowBackground">@color/app_background</item>
-        <item name="android:statusBarColor">@color/brand_blue_dark</item>
-        <item name="android:navigationBarColor">@color/app_background</item>
+        <!-- 全面屏边到边：系统栏透明，由顶栏背景 / 容器内边距接管 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
@@ -17,6 +18,22 @@
     </style>
 
     <style name="TextAppearance.Solarpanel.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/app_text_secondary</item>
+    </style>
+
+    <!-- 白底顶栏：标题/副标题更小号，工具栏图标统一染深色 -->
+    <style name="ThemeOverlay.Solarpanel.Toolbar" parent="ThemeOverlay.Material3">
+        <item name="colorControlNormal">@color/app_text_primary</item>
+        <item name="android:textColorPrimary">@color/app_text_primary</item>
+    </style>
+
+    <style name="TextAppearance.Solarpanel.ToolbarTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">17sp</item>
+        <item name="android:textColor">@color/app_text_primary</item>
+    </style>
+
+    <style name="TextAppearance.Solarpanel.ToolbarSubtitle" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/app_text_secondary</item>
     </style>
 

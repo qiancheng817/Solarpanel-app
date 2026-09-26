@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Solarpanel"
-include ':app'
+rootProject.name = "solarpanel"
+include(":app")

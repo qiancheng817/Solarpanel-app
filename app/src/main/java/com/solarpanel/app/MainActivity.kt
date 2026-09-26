@@ -1456,7 +1456,7 @@ class MainActivity : AppCompatActivity() {
                 "'#spGroupBar .sp-in img{width:100%;height:100%;object-fit:cover;border-radius:999px;}'," +
                 "'#spGroupBar .sp-in .sp-tx{font-size:15px;font-weight:600;color:#fff;line-height:1;}'," +
                 "'#spGroupBar .sp-in .sp-em{font-size:24px;line-height:1;}'," +
-                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);box-shadow:0 0 0 2px rgba(59,130,246,0.18);}'," +
+                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);border-width:2px;}'," +
                 "'#navbarSelect{display:none !important;}'" +
                 "].join('');" +
                 "(document.head||document.documentElement).appendChild(st);" +

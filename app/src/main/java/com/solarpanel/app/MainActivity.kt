@@ -291,6 +291,13 @@ class MainActivity : AppCompatActivity() {
                         binding.progressBar.visibility = View.VISIBLE
                     }
                 }
+                // 加载过程中提前注入：面板 HTML 一旦解析出 head/下拉框，
+                // 样式立即生效，避免首开先看到老样式、刷新才正常。
+                // 两个脚本均幂等，重复调用无副作用。
+                if (newProgress in 30..99) {
+                    injectPanelCssFix()
+                    injectGroupNav()
+                }
             }
 
             override fun onReceivedTitle(view: WebView, title: String?) {
@@ -1425,7 +1432,9 @@ class MainActivity : AppCompatActivity() {
 
         /**
          * 图标胶囊分组条（nav 模式手机端）：
-         * - 一行 5 个、仅显示图标（取分组内第一张卡片的图标；无卡片用地球图标）；
+         * - 一行 5 个；图标直接取自分组标题前的 emoji（与下拉框显示的文字同源，
+         *   不发起任何额外网络请求）；没有 emoji 的分组先显示标题首字色块，
+         *   该分组卡片渲染后自动升级为第一张卡片的真实图标。
          *   超过 5 个可横向滑动胶囊条查看更多。
          * - 点击胶囊切换分组；在网页区域左右滑动屏幕也可切换上/下一个分组。
          * - 当前分组写入 localStorage，页面因打开卡片而跳走、再返回时恢复到
@@ -1439,7 +1448,7 @@ class MainActivity : AppCompatActivity() {
                 "var LS_KEY='sp_nav_group_v1',EDGE=34,TH=42;" +
                 "var st=document.createElement('style');" +
                 "st.textContent=[" +
-                "'#spGroupBar{margin:0;padding:2px 0 9px;}'," +
+                "'#spGroupBar{margin:0;padding:2px 0 10px;}'," +
                 "'#spGroupBar .sp-track{display:flex;gap:4px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;}'," +
                 "'#spGroupBar .sp-track::-webkit-scrollbar{display:none;}'," +
                 "'#spGroupBar .sp-cap{flex:0 0 calc((100% - 16px)/5);scroll-snap-align:center;display:flex;align-items:center;justify-content:center;}'," +
@@ -1447,29 +1456,14 @@ class MainActivity : AppCompatActivity() {
                 "'#spGroupBar .sp-in img{width:100%;height:100%;object-fit:cover;border-radius:999px;}'," +
                 "'#spGroupBar .sp-in .sp-tx{font-size:15px;font-weight:600;color:#fff;line-height:1;}'," +
                 "'#spGroupBar .sp-in .sp-em{font-size:24px;line-height:1;}'," +
-                "'#spGroupBar .sp-in .sp-globe{width:24px;height:24px;color:var(--text-muted,#888);}'," +
-                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);background:var(--accent-weak,rgba(59,130,246,0.10));}'," +
+                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);box-shadow:0 0 0 2px rgba(59,130,246,0.18);}'," +
                 "'#navbarSelect{display:none !important;}'" +
                 "].join('');" +
                 "(document.head||document.documentElement).appendChild(st);" +
                 "var bar=document.createElement('div');bar.id='spGroupBar';bar.style.display='none';" +
                 "var track=document.createElement('div');track.className='sp-track';bar.appendChild(track);" +
-                "var sel=null,data=null,loaded=false,restored=false,observer=null,pending=false;" +
-                "function findGroup(idx){if(!data||!data.groups){return null;}return data.groups[idx]||null;}" +
-                "function makeGlobe(){" +
-                "var w=document.createElement('span');" +
-                "w.innerHTML='<svg class=\"sp-globe\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18\"/></svg>';" +
-                "return w.firstChild;}" +
-                "function textFallback(inEl,item,g){" +
-                "var raw=(item&&item.icon_type==='text'&&item.icon_value)?item.icon_value:((item&&item.title)||(g&&g.title)||'?');" +
-                "var tx=document.createElement('span');tx.className='sp-tx';" +
-                "tx.textContent=window.smartIconText?smartIconText(raw):String(raw).slice(0,2);" +
-                "inEl.style.background=(item&&item.icon_bg)||(window.stringColor?stringColor((item&&item.title)||(g&&g.title)||'?'):'#6b7280');" +
-                "inEl.appendChild(tx);}" +
-                "function addImg(inEl,srcs,item,g){" +
-                "var img=document.createElement('img');img.alt='';var i=0;" +
-                "img.onerror=function(){i++;if(i<srcs.length){img.src=srcs[i];}else{inEl.innerHTML='';textFallback(inEl,item,g);}};" +
-                "img.src=srcs[0];inEl.appendChild(img);}" +
+                "var sel=null,restored=false,observer=null,pending=false,upgraded={};" +
+                "function safe(fn){try{fn();}catch(e){}}" +
                 "function leadingEmoji(title){" +
                 "var m=/^\\s*(\\p{Extended_Pictographic})/u.exec(title);" +
                 "if(!m){return null;}" +
@@ -1482,15 +1476,19 @@ class MainActivity : AppCompatActivity() {
                 "if(m2){end+=m2[0].length;}else{break;}}" +
                 "}else{break;}}" +
                 "return title.slice(m.index,end);}" +
-                "function fillCap(inEl,g){" +
-                "var em=g&&g.title?leadingEmoji(g.title):null;" +
-                "if(em){var es=document.createElement('span');es.className='sp-em';es.textContent=em;inEl.appendChild(es);return;}" +
-                "var item=g&&g.items&&g.items.length?g.items[0]:null;" +
-                "if(item){" +
-                "if(item.icon_type==='image'&&item.icon_value){addImg(inEl,[window.assetUrl?assetUrl(item.icon_value):item.icon_value],item,g);return;}" +
-                "if(item.icon_type==='favicon'&&item.url&&window.faviconSources){var ss=faviconSources(item.url);if(ss&&ss.length){addImg(inEl,ss,item,g);return;}}" +
-                "textFallback(inEl,item,g);return;}" +
-                "inEl.appendChild(makeGlobe());}" +
+                "function titleInitials(text){" +
+                "var em=leadingEmoji(text);" +
+                "var body=em?text.slice(em.length):text;" +
+                "body=body.replace(/[\\s\\p{P}\\p{S}]/gu,'');" +
+                "if(!body){body=String(text||'?');}" +
+                "return Array.from(body).slice(0,2).join('');}" +
+                "function fillCap(inEl,text){" +
+                "var em=leadingEmoji(text);" +
+                "if(em){" +
+                "var es=document.createElement('span');es.className='sp-em';es.textContent=em;inEl.appendChild(es);" +
+                "}else{" +
+                "inEl.style.background=window.stringColor?stringColor(text||'?'):'#6b7280';" +
+                "var tx=document.createElement('span');tx.className='sp-tx';tx.textContent=titleInitials(text);inEl.appendChild(tx);}}" +
                 "function syncActive(val,scroll){" +
                 "var caps=track.children;" +
                 "for(var i=0;i<caps.length;i++){caps[i].classList.toggle('active',i===val);}" +
@@ -1501,12 +1499,26 @@ class MainActivity : AppCompatActivity() {
                 "for(var i=0;i<sel.options.length;i++){(function(idx){" +
                 "var cap=document.createElement('div');cap.className='sp-cap';" +
                 "var inEl=document.createElement('span');inEl.className='sp-in';" +
-                "fillCap(inEl,findGroup(idx));cap.appendChild(inEl);" +
+                "fillCap(inEl,sel.options[idx].textContent);cap.appendChild(inEl);" +
                 "cap.addEventListener('click',function(){applySelect(idx);});" +
                 "track.appendChild(cap);})(i);}" +
                 "syncActive(+sel.value,false);track.scrollLeft=prevLeft;" +
                 "if(!bar.parentNode&&sel.parentNode){sel.parentNode.insertBefore(bar,sel);}" +
-                "bar.style.display='block';}" +
+                "bar.style.display='block';" +
+                "scheduleUpgrade();}" +
+                "function upgradeActive(){" +
+                "var idx=+sel.value;if(upgraded[idx]){return;}" +
+                "var cap=track.children[idx];if(!cap){return;}" +
+                "var inEl=cap.querySelector('.sp-in');if(!inEl){return;}" +
+                "if(inEl.querySelector('.sp-em')){upgraded[idx]=true;return;}" +
+                "var icon=document.querySelector('#groupsWrap .cards .card .icon');if(!icon){return;}" +
+                "var img=icon.querySelector('img');" +
+                "if(img&&img.complete&&img.naturalWidth>0){" +
+                "var n=document.createElement('img');n.alt='';n.src=img.src;" +
+                "inEl.style.background='';inEl.innerHTML='';inEl.appendChild(n);" +
+                "upgraded[idx]=true;}}" +
+                "function scheduleUpgrade(){" +
+                "[200,600,1200,2200].forEach(function(d){setTimeout(function(){safe(upgradeActive);},d);});}" +
                 "function persist(){var idx=+sel.value;if(!sel.options[idx]){return;}" +
                 "try{localStorage.setItem(LS_KEY,JSON.stringify({idx:idx,title:sel.options[idx].textContent,t:Date.now()}));}catch(e){}}" +
                 "function applySelect(idx){if(!sel.options[idx]){return;}" +
@@ -1516,23 +1528,18 @@ class MainActivity : AppCompatActivity() {
                 "if(s&&typeof s.idx==='number'&&s.idx<sel.options.length&&(!s.title||sel.options[s.idx].textContent===s.title)){" +
                 "if(s.idx!==(+sel.value)){applySelect(s.idx);}" +
                 "else{var c=track.children[s.idx];if(c){c.scrollIntoView({inline:'center',block:'nearest'});}}}}" +
-                "function loadData(){if(loaded){return Promise.resolve(data);}loaded=true;" +
-                "return fetch('../backend/api/public.php',{credentials:'same-origin'})" +
-                ".then(function(r){return r.json();}).catch(function(){return null;})" +
-                ".then(function(d){data=d;return d;});}" +
-                "function run(){if(sel&&sel.options&&sel.options.length){loaded=false;" +
-                "loadData().then(function(){rebuild();restore();});}}" +
+                "function run(){if(sel&&sel.options&&sel.options.length){rebuild();restore();}}" +
                 "function schedule(){if(pending){return;}pending=true;" +
-                "setTimeout(function(){pending=false;run();},120);}" +
+                "setTimeout(function(){pending=false;safe(run);},80);}" +
                 "function start(){sel=document.getElementById('navbarSelect');if(!sel){return;}" +
                 "if(!observer){observer=new MutationObserver(function(){schedule();});" +
                 "observer.observe(sel,{childList:true});" +
-                "sel.addEventListener('change',function(){persist();syncActive(+sel.value,true);});}" +
+                "sel.addEventListener('change',function(){safe(persist);syncActive(+sel.value,true);scheduleUpgrade();});}" +
                 "schedule();}" +
                 "var tries=0;" +
                 "var iv=setInterval(function(){" +
                 "if(document.getElementById('navbarSelect')){clearInterval(iv);start();}" +
-                "else if(++tries>60){clearInterval(iv);}} ,200);" +
+                "else if(++tries>80){clearInterval(iv);}},150);" +
                 "start();" +
                 "var x0=0,y0=0,dec=null,ign=false;" +
                 "document.addEventListener('touchstart',function(e){" +

@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URL
 
 /**
@@ -29,14 +31,23 @@ object UpdateChecker {
         data class Error(val message: String) : Result()
     }
 
+    /** 解析 "host:port" 形式的代理配置，格式非法返回 null。 */
+    fun parseProxy(proxy: String): Proxy? {
+        if (proxy.isBlank()) return null
+        val parts = proxy.trim().split(':')
+        if (parts.size != 2) return null
+        val port = parts[1].toIntOrNull() ?: return null
+        return Proxy(Proxy.Type.HTTP, InetSocketAddress(parts[0].trim(), port))
+    }
+
     /**
      * 后台线程发起请求，主线程回调 [callback]。
-     * 当前版本 [currentVersionName] 形如 "2.1.0"，tag 形如 "v2.1.0"。
+     * [proxy] 为 Prefs.getProxy 的值，空 = 直连。
      */
-    fun check(currentVersionName: String, callback: (Result) -> Unit) {
+    fun check(currentVersionName: String, proxy: String, callback: (Result) -> Unit) {
         val mainHandler = Handler(Looper.getMainLooper())
         Thread {
-            val result = runCatching { fetchRelease() }
+            val result = runCatching { fetchRelease(proxy) }
                 .fold(
                     onSuccess = { release ->
                         if (release == null) {
@@ -57,16 +68,26 @@ object UpdateChecker {
         }
     }
 
-    private fun fetchRelease(): ReleaseInfo? {
-        val conn = (URL(API_URL).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8_000
-            readTimeout = 8_000
+    private fun openConnection(url: String, proxy: String): HttpURLConnection {
+        val parsed = parseProxy(proxy)
+            ?: return URL(url).openConnection() as HttpURLConnection
+        return URL(url).openConnection(parsed) as HttpURLConnection
+    }
+
+    private fun fetchRelease(proxy: String): ReleaseInfo? {
+        val conn = openConnection(API_URL, proxy).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
             requestMethod = "GET"
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "solarpanel-android")
         }
         return try {
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            val code = conn.responseCode
+            if (code != HttpURLConnection.HTTP_OK) {
+                // 把状态码带出去，便于诊断代理是否生效
+                throw RuntimeException("HTTP $code")
+            }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(body)
             val tag = json.optString("tag_name").trim()

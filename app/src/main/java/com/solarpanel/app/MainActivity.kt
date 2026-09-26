@@ -512,6 +512,18 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 更新代理：检查更新/下载 APK 走该代理，副标题显示当前值
+        val currentProxy = Prefs.getProxy(this)
+        sheetBinding.proxyHint.text = if (currentProxy.isBlank()) {
+            getString(R.string.menu_proxy_hint_direct)
+        } else {
+            getString(R.string.menu_proxy_hint_set, currentProxy)
+        }
+        sheetBinding.rowProxy.setOnClickListener {
+            dialog.dismiss()
+            showProxyDialog()
+        }
+
         sheetBinding.rowRefresh.setOnClickListener {
             dialog.dismiss()
             if (webView.url != null) webView.reload()
@@ -1310,8 +1322,40 @@ class MainActivity : AppCompatActivity() {
         runUpdateCheck(silent = false)
     }
 
+    /** 更新代理设置弹窗：留空=直连，否则形如 127.0.0.1:7890。 */
+    private fun showProxyDialog() {
+        val input = EditText(this).apply {
+            setText(Prefs.getProxy(this@MainActivity))
+            hint = getString(R.string.proxy_dialog_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+            val pad = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 24f, resources.displayMetrics
+            ).toInt()
+            setPadding(pad, 0, pad, 0)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.proxy_dialog_title)
+            .setMessage(R.string.proxy_dialog_message)
+            .setView(input)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_ok) { _, _ ->
+                val value = input.text.toString().trim()
+                if (value.isEmpty()) {
+                    Prefs.setProxy(this, "")
+                    toast(R.string.toast_proxy_saved)
+                } else if (UpdateChecker.parseProxy(value) != null) {
+                    Prefs.setProxy(this, value)
+                    toast(R.string.toast_proxy_saved)
+                } else {
+                    toast(R.string.toast_proxy_invalid)
+                }
+            }
+            .show()
+    }
+
     private fun runUpdateCheck(silent: Boolean) {
-        UpdateChecker.check(BuildConfig.VERSION_NAME) { result ->
+        UpdateChecker.check(BuildConfig.VERSION_NAME, Prefs.getProxy(this)) { result ->
             when (result) {
                 is UpdateChecker.Result.HasUpdate ->
                     showUpdateDialog(result.info)
@@ -1348,10 +1392,57 @@ class MainActivity : AppCompatActivity() {
             .setMessage(notes)
             .setNegativeButton(R.string.dialog_cancel, null)
             .setPositiveButton(R.string.update_download_button) { _, _ ->
-                // APK 直链：guessFileName 会自动取 solarpanel-x.y.z.apk
-                enqueueDownload(info.apkUrl, "", null, null)
+                downloadAndInstall(info)
             }
             .show()
+    }
+
+    private var updateProgressDialog: AlertDialog? = null
+
+    /** 应用内下载 APK（支持代理），带进度弹窗，完成后拉起安装器。 */
+    private fun downloadAndInstall(info: UpdateChecker.ReleaseInfo) {
+        val progress = android.widget.ProgressBar(
+            this, null, android.R.attr.progressBarStyleHorizontal
+        ).apply {
+            max = 100
+            val pad = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 24f, resources.displayMetrics
+            ).toInt()
+            setPadding(pad, 0, pad, 0)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_downloading_title, info.versionName))
+            .setView(progress)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+        updateProgressDialog = dialog
+
+        ApkDownloader.download(this, info.apkUrl, Prefs.getProxy(this)) { state ->
+            when (state) {
+                is ApkDownloader.State.Progress -> {
+                    if (state.percent >= 0) progress.progress = state.percent
+                }
+                is ApkDownloader.State.Done -> {
+                    updateProgressDialog?.dismiss()
+                    updateProgressDialog = null
+                    try {
+                        ApkDownloader.install(this, state.file)
+                    } catch (e: Exception) {
+                        toast(R.string.toast_download_fail)
+                    }
+                }
+                is ApkDownloader.State.Error -> {
+                    updateProgressDialog?.dismiss()
+                    updateProgressDialog = null
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.toast_download_fail)
+                        .setMessage(state.message)
+                        .setPositiveButton(R.string.dialog_ok, null)
+                        .show()
+                }
+            }
+        }
     }
 
     private fun showHttpAuthDialog(handler: HttpAuthHandler, host: String, realm: String?) {

@@ -15,6 +15,7 @@ object Prefs {
     private const val KEY_SERVER = "server_url"
     private const val KEY_SERVER_HISTORY = "server_history" // 换行分隔，最近使用的在最前
     private const val KEY_DISPLAY_MODE = "display_mode" // desktop / mobile
+    private const val KEY_PROXY = "update_proxy" // 检查更新/下载走代理，形如 127.0.0.1:7890，空=直连
     private const val MAX_SERVER_HISTORY = 10
 
     private fun store(context: Context): SharedPreferences =
@@ -43,6 +44,14 @@ object Prefs {
         store(context).edit()
             .putString(KEY_SERVER_HISTORY, history.joinToString("\n"))
             .apply()
+    }
+
+    /** 检查更新 / 下载 APK 使用的 HTTP 代理，空字符串表示直连。 */
+    fun getProxy(context: Context): String =
+        store(context).getString(KEY_PROXY, "") ?: ""
+
+    fun setProxy(context: Context, proxy: String) {
+        store(context).edit().putString(KEY_PROXY, proxy.trim()).apply()
     }
 
     /** 桌面 / 手机屏幕比例模式，默认 desktop。 */

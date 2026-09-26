@@ -31,6 +31,15 @@
     <string name="toast_update_failed">检查更新失败</string>
     <string name="toast_update_failed_detail">原因：%1$s\n\n可改用浏览器打开发布页手动下载。</string>
     <string name="update_open_browser">浏览器打开发布页</string>
+    <string name="menu_proxy">更新代理</string>
+    <string name="menu_proxy_hint_direct">当前：直连（不开代理）</string>
+    <string name="menu_proxy_hint_set">当前：%1$s</string>
+    <string name="proxy_dialog_title">设置更新代理</string>
+    <string name="proxy_dialog_message">检查更新和下载 APK 走该代理，解决国内直连 GitHub 下载不动的问题。\n\n留空 = 直连。常见格式：127.0.0.1:7890</string>
+    <string name="proxy_dialog_hint">例如 127.0.0.1:7890</string>
+    <string name="toast_proxy_saved">代理已保存</string>
+    <string name="toast_proxy_invalid">格式不对，应为 IP:端口</string>
+    <string name="update_downloading_title">正在下载 %1$s …</string>
     <string name="update_found_title">发现新版本 %1$s</string>
     <string name="update_download_button">下载更新</string>
     <string name="update_notes_empty">暂无更新说明。</string>

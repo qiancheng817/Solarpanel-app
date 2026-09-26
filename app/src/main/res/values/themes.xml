@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- 冷启动开屏：米白底 + 应用图标，无缝交棒给主主题 -->
+    <style name="Theme.Solarpanel.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/app_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.Solarpanel</item>
+    </style>
+
     <style name="Theme.Solarpanel" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/brand_blue_dark</item>
         <item name="colorOnPrimary">@color/white</item>

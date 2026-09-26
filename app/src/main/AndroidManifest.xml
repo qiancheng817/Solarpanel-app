@@ -25,6 +25,7 @@
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|density|fontScale"
             android:exported="true"
             android:launchMode="singleTop"
+            android:theme="@style/Theme.Solarpanel.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

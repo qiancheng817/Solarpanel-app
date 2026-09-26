@@ -47,6 +47,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -139,7 +140,13 @@ class MainActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 开屏：安装 SplashScreen 并保持最短展示时长，避免品牌页一闪而过
+        val splashScreen = installSplashScreen()
+        val splashStart = SystemClock.elapsedRealtime()
         super.onCreate(savedInstanceState)
+        splashScreen.setKeepOnScreenCondition {
+            SystemClock.elapsedRealtime() - splashStart < SPLASH_MIN_MS
+        }
 
         // 边到边布局：系统栏区域由各容器自行通过 inset 处理，
         // 保证顶栏不与手机状态栏重叠、网页不被导航栏永久遮挡。
@@ -1584,6 +1591,7 @@ class MainActivity : AppCompatActivity() {
 
         private const val DOUBLE_BACK_INTERVAL_MS = 2000L
         private const val TOP_BAR_ANIM_MS = 180L
+        private const val SPLASH_MIN_MS = 1200L
 
         private const val MAX_RENDERER_AUTO_RECOVERIES = 2
         private const val RENDERER_CRASH_WINDOW_MS = 30_000L

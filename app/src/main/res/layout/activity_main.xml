@@ -215,6 +215,7 @@
     <!--
         开屏品牌页：必须是最后一个子 View（FrameLayout 中后添加的层级更高），
         覆盖在 WebView / 配置页 / 错误页之上。
+        elevation 设高，压过自带高度的 MaterialToolbar，防止顶栏穿透闪现；
         背景与根布局、系统闪屏同为 app_background，任何交棒都无色差；
         只有内层文字组做淡入淡出，避免整层白底动画造成的闪屏。
     -->
@@ -223,6 +224,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/app_background"
+        android:elevation="16dp"
         android:gravity="center"
         android:orientation="vertical">
 

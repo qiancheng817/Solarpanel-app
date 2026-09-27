@@ -157,7 +157,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         // 品牌开屏：背景层全程不透明（与系统闪屏/根布局同为 app_background，
-        // 交棒无色差），仅对文字组做淡入，避免整层白底动画导致的闪屏
+        // 交棒无色差），仅对文字组做淡入，避免整层白底动画导致的闪屏。
+        // 开屏期间隐藏顶栏，防止 MaterialToolbar 首帧穿透品牌层闪现。
+        binding.topBar.isVisible = false
         binding.splashBrandContent.alpha = 0f
         binding.splashBrandContent.animate().alpha(1f).setDuration(500).start()
         scheduleSplashDismiss()
@@ -1593,7 +1595,7 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
     }
 
-    /** 品牌开屏：最短展示后仅淡出文字组，再隐藏整层（背景同色，隐藏无跳变） */
+    /** 品牌开屏：最短展示后仅淡出文字组，再隐藏品牌层并恢复顶栏（背景同色，隐藏无跳变） */
     private fun scheduleSplashDismiss() {
         Handler(Looper.getMainLooper()).postDelayed({
             binding.splashBrandContent.animate()
@@ -1601,6 +1603,7 @@ class MainActivity : AppCompatActivity() {
                 .setDuration(SPLASH_FADE_MS)
                 .withEndAction {
                     binding.splashBrand.isVisible = false
+                    binding.topBar.isVisible = true
                 }
                 .start()
         }, SPLASH_BRAND_MS)

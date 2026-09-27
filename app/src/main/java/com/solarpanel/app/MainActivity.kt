@@ -315,17 +315,24 @@ class MainActivity : AppCompatActivity() {
     private fun configureIconCache() {
         IconCache.init(this)
         try {
+            // SW 回调在非 UI 线程触发，这里提前在 UI 线程取出 UA，
+            // 避免回调内访问 webView（跨线程调 WebView 方法会直接崩溃）
+            val swUserAgent = webView.settings.userAgentString
             ServiceWorkerController.getInstance().setServiceWorkerClient(
                 object : ServiceWorkerClient() {
                     override fun shouldInterceptRequest(
                         request: WebResourceRequest
                     ): WebResourceResponse? {
-                        return IconCache.intercept(
-                            this@MainActivity,
-                            request,
-                            currentPanelHost(),
-                            webView.settings.userAgentString
-                        )
+                        return try {
+                            IconCache.intercept(
+                                this@MainActivity,
+                                request,
+                                currentPanelHost(),
+                                swUserAgent
+                            )
+                        } catch (t: Throwable) {
+                            null
+                        }
                     }
                 }
             )

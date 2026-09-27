@@ -76,7 +76,7 @@ object IconCache {
             if (!shouldHandle(uri, panelHost)) return null
             init(context)
             serve(uri.toString(), userAgent)
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             null
         }
     }

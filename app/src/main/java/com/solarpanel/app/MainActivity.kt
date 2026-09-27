@@ -158,7 +158,8 @@ class MainActivity : AppCompatActivity() {
 
         // 品牌开屏：背景层全程不透明（与系统闪屏/根布局同为 app_background，
         // 交棒无色差），仅对文字组做淡入，避免整层白底动画导致的闪屏。
-        // 开屏期间隐藏顶栏，防止 MaterialToolbar 首帧穿透品牌层闪现。
+        // 开屏期间隐藏顶栏（GONE），防止 MaterialToolbar 首帧穿透品牌层闪现；
+        // 顶栏高度在开屏结束后重新测量（见 scheduleSplashDismiss）。
         binding.topBar.isVisible = false
         binding.splashBrandContent.alpha = 0f
         binding.splashBrandContent.animate().alpha(1f).setDuration(500).start()
@@ -1604,6 +1605,13 @@ class MainActivity : AppCompatActivity() {
                 .withEndAction {
                     binding.splashBrand.isVisible = false
                     binding.topBar.isVisible = true
+                    // 开屏期间顶栏为 GONE（不参与布局，height=0），configureTopBar
+                    // 首帧测到的高度是 0，位移从未生效；恢复可见后重新测量并应用
+                    binding.topBar.doOnPreDraw {
+                        topBarHeight = binding.topBar.height
+                        topBarSettled = false
+                        applyTopBarState(hide = false, animate = false)
+                    }
                 }
                 .start()
         }, SPLASH_BRAND_MS)

@@ -1686,9 +1686,10 @@ class MainActivity : AppCompatActivity() {
 
         /**
          * 图标胶囊分组条（nav 模式手机端）：
-         * - 一行 5 个；图标直接取自分组标题前的 emoji（与下拉框显示的文字同源，
-         *   不发起任何额外网络请求）；没有 emoji 的分组先显示标题首字色块，
-         *   该分组卡片渲染后自动升级为第一张卡片的真实图标。
+         * - 一行 5 个；图标优先取面板 v2.1.16+ 分组图标库为每个分组配置的图标
+         *   （state.groups[*].icon，option.value 即 groups 下标，不发起额外网络请求）；
+         *   旧版面板 / 未配置库图标的分组依次回退：分组标题前的 emoji →
+         *   标题首字色块，该分组卡片渲染后再自动升级为第一张卡片的真实图标。
          *   超过 5 个可横向滑动胶囊条查看更多。
          * - 点击胶囊切换分组；在网页区域左右滑动屏幕也可切换上/下一个分组。
          * - 当前分组写入 localStorage，页面因打开卡片而跳走、再返回时恢复到
@@ -1736,8 +1737,18 @@ class MainActivity : AppCompatActivity() {
                 "body=body.replace(/[\\s\\p{P}\\p{S}]/gu,'');" +
                 "if(!body){body=String(text||'?');}" +
                 "return Array.from(body).slice(0,2).join('');}" +
-                "function fillCap(inEl,text){" +
-                "var em=leadingEmoji(text);" +
+                // 面板 v2.1.16+ 分组图标库：option.value 即 state.groups 下标，
+                // 直接读取该分组在图标库中配置的 icon；旧版面板无此数据时回退 null。
+                "function groupIcon(opt){" +
+                "try{" +
+                "if(typeof state!=='undefined'&&state&&state.groups&&state.groups.length){" +
+                "var g=state.groups[+opt.value];" +
+                "if(g&&g.icon){return String(g.icon);}" +
+                "}}" +
+                "catch(e){}" +
+                "return null;}" +
+                "function fillCap(inEl,text,libIcon){" +
+                "var em=libIcon||leadingEmoji(text);" +
                 "if(em){" +
                 "var es=document.createElement('span');es.className='sp-em';es.textContent=em;inEl.appendChild(es);" +
                 "}else{" +
@@ -1749,13 +1760,15 @@ class MainActivity : AppCompatActivity() {
                 "if(scroll&&caps[val]){caps[val].scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}}" +
                 "function rebuild(){" +
                 "if(!sel||!sel.options||!sel.options.length){bar.style.display='none';return;}" +
-                "var prevLeft=track.scrollLeft;track.innerHTML='';" +
+                "var prevLeft=track.scrollLeft;track.innerHTML='';var sig='';" +
                 "for(var i=0;i<sel.options.length;i++){(function(idx){" +
+                "sig+=sel.options[idx].textContent+'|';" +
                 "var cap=document.createElement('div');cap.className='sp-cap';" +
                 "var inEl=document.createElement('span');inEl.className='sp-in';" +
-                "fillCap(inEl,sel.options[idx].textContent);cap.appendChild(inEl);" +
+                "fillCap(inEl,sel.options[idx].textContent,groupIcon(sel.options[idx]));cap.appendChild(inEl);" +
                 "cap.addEventListener('click',function(){applySelect(idx);});" +
                 "track.appendChild(cap);})(i);}" +
+                "bar.setAttribute('data-sig',sig);" +
                 "syncActive(+sel.value,false);track.scrollLeft=prevLeft;" +
                 "if(!bar.parentNode&&sel.parentNode){sel.parentNode.insertBefore(bar,sel);}" +
                 "bar.style.display='block';" +
@@ -1796,8 +1809,11 @@ class MainActivity : AppCompatActivity() {
                 "sel.addEventListener('change',function(){safe(persist);syncActive(+sel.value,true);scheduleUpgrade();});" +
                 "}}" +
                 "if(!sel||!sel.options||!sel.options.length){if(bar.isConnected){bar.style.display='none';}return;}" +
-                // 胶囊条被一起清掉、位置错乱或数量不一致 → 整体重建
-                "if(!bar.isConnected||bar.parentNode!==sel.parentNode||track.children.length!==sel.options.length){rebuild();}" +
+                // 胶囊条被一起清掉、位置错乱、数量不一致，或选项文案变化
+                // （图标库图标/标题在后台被修改、面板刷新数据）→ 整体重建
+                "var sig='';" +
+                "for(var si=0;si<sel.options.length;si++){sig+=sel.options[si].textContent+'|';}" +
+                "if(!bar.isConnected||bar.parentNode!==sel.parentNode||track.children.length!==sel.options.length||sig!==bar.getAttribute('data-sig')){rebuild();}" +
                 "else{bar.style.display='block';syncActive(+sel.value,false);}" +
                 "if(!restored){restore();}" +
                 "});}" +

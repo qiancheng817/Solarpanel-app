@@ -82,26 +82,6 @@ jobs:
       - name: Build release APK
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Report build errors
-        if: failure()
-        continue-on-error: true
-        run: |
-          set +e
-          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build-debug.log
-          {
-            echo "### assembleRelease 诊断日志（末尾 200 行）"
-            echo '<details><summary>展开日志</summary>'
-            echo ''
-            echo '```'
-            tail -n 200 /tmp/build-debug.log
-            echo '```'
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
-          grep -E "^e: |: error:|error: |Unresolved reference|FAILURE:|What went wrong|Execution failed|Caused by:" /tmp/build-debug.log \
-            | head -n 40 | while IFS= read -r line; do
-              echo "::error::${line:0:800}"
-            done
-
       - name: Collect APK
         id: apk
         run: |

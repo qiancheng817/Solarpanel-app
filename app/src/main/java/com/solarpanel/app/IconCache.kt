@@ -23,7 +23,7 @@ import java.security.MessageDigest
  * 本缓存在原生网络层拦截图标请求，绕开以上全部限制：
  *
  * - 命中：直接返回磁盘字节并附 immutable 缓存头，无网络 RTT，SW 也能瞬间拿到 200；
- * - 未命中：原生代取一次（仅接受 image/* 且 ≤ [MAX_ICON_BYTES]），落盘后返回；
+ * - 未命中：原生代取一次（仅接受 image 主类型且 ≤ [MAX_ICON_BYTES]），落盘后返回；
  * - 仅拦截面板 faviconSources 的 4 个第三方源 + 面板同域 /uploads/ 图标，其余放行；
  * - 磁盘文件按 URL 的 SHA-256 命名，LRU 上限 [MAX_FILES] / [MAX_BYTES]；
  * - 两个拦截入口共用：WebViewClient（页面子资源）与 ServiceWorkerClient（SW 的 fetch）。

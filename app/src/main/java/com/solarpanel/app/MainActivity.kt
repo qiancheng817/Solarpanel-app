@@ -328,7 +328,8 @@ class MainActivity : AppCompatActivity() {
                                 this@MainActivity,
                                 request,
                                 currentPanelHost(),
-                                swUserAgent
+                                swUserAgent,
+                                fromServiceWorker = true
                             )
                         } catch (t: Throwable) {
                             null
@@ -336,8 +337,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             )
-        } catch (e: Exception) {
+            IconCache.markSwRegistration(true, null)
+        } catch (t: Throwable) {
             // 极少数禁用 SW 的环境下退回仅页面侧拦截，不影响正常使用
+            IconCache.markSwRegistration(false, t.javaClass.simpleName + ": " + t.message)
         }
     }
 
@@ -417,7 +420,8 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     request,
                     currentPanelHost(),
-                    userAgent
+                    userAgent,
+                    fromServiceWorker = false
                 )?.let { return it }
                 if (!request.isForMainFrame) {
                     return null // 只拦主文档，子资源放行
@@ -1376,7 +1380,10 @@ class MainActivity : AppCompatActivity() {
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.about_title)
-            .setMessage(getString(R.string.about_message, BuildConfig.VERSION_NAME, server))
+            .setMessage(
+                getString(R.string.about_message, BuildConfig.VERSION_NAME, server) +
+                    "\n\n" + IconCache.statsText()
+            )
             .setPositiveButton(R.string.dialog_ok, null)
             .setNeutralButton(R.string.menu_check_update) { _, _ ->
                 checkUpdateFromUser()

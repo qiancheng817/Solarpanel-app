@@ -1,6 +1,7 @@
 package com.solarpanel.app
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -50,14 +51,60 @@ object IconCache {
     private var dir: File? = null
     private var writesSinceTrim = 0
 
+    // ---- 运行统计（持久化到 SharedPreferences，用于远程诊断缓存是否生效） ----
+    @Volatile
+    private var prefs: SharedPreferences? = null
+
+    private const val PREF_NAME = "sp_icon_cache_stats"
+    private const val K_WV_CALLS = "wv_calls"
+    private const val K_SW_CALLS = "sw_calls"
+    private const val K_HITS = "hits"
+    private const val K_FETCH_OK = "fetch_ok"
+    private const val K_FETCH_FAIL = "fetch_fail"
+    private const val K_LAST_ERROR = "last_error"
+    private const val K_SW_REGISTERED = "sw_registered"
+
     fun init(context: Context) {
         if (dir == null) {
             synchronized(this) {
                 if (dir == null) {
                     dir = File(context.applicationContext.cacheDir, "sp_icon_cache")
+                    prefs = context.applicationContext
+                        .getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 }
             }
         }
+    }
+
+    private fun bump(key: String) {
+        val p = prefs ?: return
+        synchronized(this) {
+            p.edit().putLong(key, p.getLong(key, 0) + 1).apply()
+        }
+    }
+
+    private fun recordError(message: String) {
+        prefs?.edit()?.putString(K_LAST_ERROR, message.take(300))?.apply()
+    }
+
+    /** 记录 ServiceWorkerClient 注册结果（注册失败则 SW 路径拦截完全失效）。 */
+    fun markSwRegistration(ok: Boolean, error: String?) {
+        prefs?.edit()
+            ?.putBoolean(K_SW_REGISTERED, ok)
+            ?.putString(K_LAST_ERROR, if (ok) null else "SW 注册失败: ${error?.take(200)}")
+            ?.apply()
+    }
+
+    /** 关于页展示的统计文本。 */
+    fun statsText(): String {
+        val p = prefs ?: return "图标缓存：未初始化"
+        val files = dir?.listFiles()?.count { it.isFile && !it.name.endsWith(".m") } ?: 0
+        val lastError = p.getString(K_LAST_ERROR, null)?.takeIf { it.isNotBlank() } ?: "无"
+        return "图标缓存：文件 $files，命中 ${p.getLong(K_HITS, 0)}，" +
+            "代取成功 ${p.getLong(K_FETCH_OK, 0)}，失败 ${p.getLong(K_FETCH_FAIL, 0)}\n" +
+            "拦截次数：页面 ${p.getLong(K_WV_CALLS, 0)} / SW ${p.getLong(K_SW_CALLS, 0)}，" +
+            "SW 注册${if (p.getBoolean(K_SW_REGISTERED, false)) "成功" else "失败/未注册"}\n" +
+            "最近错误：$lastError"
     }
 
     /**
@@ -68,15 +115,18 @@ object IconCache {
         context: Context,
         request: WebResourceRequest,
         panelHost: String?,
-        userAgent: String?
+        userAgent: String?,
+        fromServiceWorker: Boolean
     ): WebResourceResponse? {
         return try {
             if (!request.method.equals("GET", ignoreCase = true)) return null
             val uri = request.url ?: return null
             if (!shouldHandle(uri, panelHost)) return null
             init(context)
+            bump(if (fromServiceWorker) K_SW_CALLS else K_WV_CALLS)
             serve(uri.toString(), userAgent)
         } catch (t: Throwable) {
+            recordError("intercept: ${t.javaClass.simpleName}: ${t.message}")
             null
         }
     }
@@ -113,6 +163,7 @@ object IconCache {
                 ?.takeIf { it.isNotBlank() }
                 ?: guessMime(urlString)
             dataFile.setLastModified(System.currentTimeMillis())
+            bump(K_HITS)
             return buildResponse(mime, bytes)
         }
 
@@ -136,23 +187,36 @@ object IconCache {
                 ?.let { conn.setRequestProperty("Cookie", it) }
 
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                bump(K_FETCH_FAIL)
+                recordError("代取 ${Uri.parse(urlString).host}: HTTP ${conn.responseCode}")
                 return null
             }
             val mime = conn.contentType?.substringBefore(';')?.trim().orEmpty()
             // 只缓存图片：favicon 源失败时常返回 HTML 错误页，必须挡掉
             if (!mime.startsWith("image/")) {
+                bump(K_FETCH_FAIL)
+                recordError("代取 ${Uri.parse(urlString).host}: 非图片类型 $mime")
                 return null
             }
-            val bytes = readCapped(conn.inputStream, MAX_ICON_BYTES) ?: return null
+            val bytes = readCapped(conn.inputStream, MAX_ICON_BYTES) ?: run {
+                bump(K_FETCH_FAIL)
+                recordError("代取 ${Uri.parse(urlString).host}: 超过大小上限")
+                return null
+            }
 
             FileOutputStream(dataFile).use { it.write(bytes) }
             mimeFile.writeText(mime)
+            bump(K_FETCH_OK)
             writesSinceTrim++
             if (writesSinceTrim >= 10) {
                 writesSinceTrim = 0
                 trim(base)
             }
             return buildResponse(mime, bytes)
+        } catch (t: Throwable) {
+            bump(K_FETCH_FAIL)
+            recordError("代取 ${Uri.parse(urlString).host}: ${t.javaClass.simpleName}: ${t.message}")
+            return null
         } finally {
             conn.disconnect()
         }

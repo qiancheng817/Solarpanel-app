@@ -38,6 +38,8 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -167,6 +169,7 @@ class MainActivity : AppCompatActivity() {
 
         configureInsets()
         configureWebView()
+        configureIconCache()
         configureWebChromeClient()
         configureWebViewClient()
         configureDownloadListener()
@@ -303,6 +306,37 @@ class MainActivity : AppCompatActivity() {
         webView.settings.userAgentString = userAgent
     }
 
+    /**
+     * 启用卡片图标原生磁盘缓存（详见 IconCache）。
+     * 页面子资源由 WebViewClient.shouldInterceptRequest 拦截；面板 Service Worker
+     * 发起的 fetch（favicon 多源回退、/uploads/ 的 network-first）只经过
+     * ServiceWorkerClient，必须在这里单独接入同一个缓存。
+     */
+    private fun configureIconCache() {
+        IconCache.init(this)
+        try {
+            ServiceWorkerController.getInstance().setServiceWorkerClient(
+                object : ServiceWorkerClient() {
+                    override fun shouldInterceptRequest(
+                        request: WebResourceRequest
+                    ): WebResourceResponse? {
+                        return IconCache.intercept(
+                            this@MainActivity,
+                            request,
+                            currentPanelHost(),
+                            webView.settings.userAgentString
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            // 极少数禁用 SW 的环境下退回仅页面侧拦截，不影响正常使用
+        }
+    }
+
+    private fun currentPanelHost(): String? =
+        Prefs.getServer(this).takeIf { it.isNotEmpty() }?.let { Uri.parse(it).host }
+
     private fun configureWebChromeClient() {
         webView.webChromeClient = object : WebChromeClient() {
 
@@ -370,6 +404,14 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
+                // 卡片图标原生磁盘缓存（favicon 第三方源 + 面板 /uploads/），
+                // 覆盖 SW 未生效/不接管的页面子资源请求
+                IconCache.intercept(
+                    this@MainActivity,
+                    request,
+                    currentPanelHost(),
+                    userAgent
+                )?.let { return it }
                 if (!request.isForMainFrame) {
                     return null // 只拦主文档，子资源放行
                 }
@@ -1295,6 +1337,7 @@ class MainActivity : AppCompatActivity() {
             webView.clearFormData()
 
             WebStorage.getInstance().deleteAllData()
+            IconCache.clear()
 
             toast(R.string.toast_cleared)
             val server = Prefs.getServer(this)
@@ -1876,13 +1919,15 @@ class MainActivity : AppCompatActivity() {
          *    已解码图片重复挂载为同步显示，切组图标零等待；拖拽排序导致的
          *    节点移除再插回也能自动补回；
          * 3) 页面数据就绪后低并发（4）后台预热未访问分组的 image / favicon 图标，
-         *    首次切过去也无需等待；上限 240 个，避免对第三方 favicon 源造成突发。
+         *    首次切过去也无需等待；预热顺序从当前分组的下一组开始循环，
+         *    数据到达 600ms 即启动；上限 240 个，避免对第三方 favicon 源造成突发。
+         *    配合原生 IconCache（磁盘持久），冷启动预热同样近乎瞬时完成。
          */
         private val ICON_POOL_JS =
             "(function(){" +
                 "function spBoot(){" +
                 "if(window.__spIconPool){try{window.__spIconPool.scan();}catch(e){}return;}" +
-                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=3500;" +
+                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=600;" +
                 "var pool=new Map();" +
                 "var resolved=Object.create(null);" +
                 "var bound=Object.create(null);" +
@@ -1999,7 +2044,15 @@ class MainActivity : AppCompatActivity() {
                 "preStarted=true;" +
                 "setTimeout(function(){" +
                 "safe(function(){" +
-                "state.groups.forEach(function(g){" +
+                // 冷启动后优先预热「下一个分组起」的图标（当前分组已在渲染，排最后），
+                // 用户冷启动后立刻切组时目标图标最先完成解码入池
+                "var preGroups;" +
+                "try{" +
+                "var all=(state.groups||[]);var li=JSON.parse(localStorage.getItem('sp_nav_group_v1')||'null');" +
+                "var cur=(li&&typeof li.idx==='number'&&li.idx>=0&&li.idx<all.length)?li.idx:0;" +
+                "preGroups=all.slice(cur+1).concat(all.slice(0,cur+1));" +
+                "}catch(e){preGroups=(state.groups||[]).slice();}" +
+                "preGroups.forEach(function(g){" +
                 "(g.items||[]).forEach(function(it){" +
                 "var id=String(it.id);" +
                 "if(resolved[id]||pool.has(id)){return;}" +

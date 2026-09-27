@@ -317,10 +317,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 // 加载过程中提前注入：面板 HTML 一旦解析出 head/下拉框，
                 // 样式立即生效，避免首开先看到老样式、刷新才正常。
-                // 两个脚本均幂等，重复调用无副作用。
+                // 三个脚本均幂等，重复调用无副作用。
                 if (newProgress in 20..99) {
                     injectPanelCssFix()
                     injectGroupNav()
+                    injectIconPool()
                 }
             }
 
@@ -413,6 +414,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 injectPanelCssFix()
                 injectGroupNav()
+                injectIconPool()
                 updateCloseButton()
             }
 
@@ -420,6 +422,7 @@ class MainActivity : AppCompatActivity() {
                 // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次
                 injectPanelCssFix()
                 injectGroupNav()
+                injectIconPool()
                 updateCloseButton()
             }
 
@@ -929,6 +932,16 @@ class MainActivity : AppCompatActivity() {
      */
     private fun injectGroupNav() {
         webView.evaluateJavascript(GROUP_NAV_JS, null)
+    }
+
+    /**
+     * 注入卡片图标池，详见 ICON_POOL_JS：
+     * nav 模式每切一次分组面板都会清空重建 #groupsWrap，全新 <img> 要重新请求
+     * favicon / 重新等多源回退，图标总要"加载一下"才出现。池化已解码的 img
+     * 节点后，切组重建时同步换回，图标即时显示；并在后台低并发预热其余分组。
+     */
+    private fun injectIconPool() {
+        webView.evaluateJavascript(ICON_POOL_JS, null)
     }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
@@ -1847,6 +1860,156 @@ class MainActivity : AppCompatActivity() {
                 "e.preventDefault();}},{passive:false});" +
                 "document.addEventListener('touchend',function(){dec=null;},{passive:true});" +
                 "document.addEventListener('touchcancel',function(){dec=null;},{passive:true});" +
+                "}" +
+                "spBoot();" +
+                "})();"
+
+        /**
+         * 卡片图标池（幂等，可重复注入）：
+         * 面板 nav 模式切换分组时 renderNavbarCardsOnly 会 wrap.innerHTML='' 重建
+         * 全部卡片，新 <img> 必须重新请求 favicon（甚至重新串行回退多个第三方源），
+         * 图标"加载一下"才出现。本脚本：
+         * 1) MutationObserver 监听 #groupsWrap：面板销毁旧分组时，从被移除的子树中
+         *    抢救已加载完成（已解码）的 <img> 节点，按卡片 data-id 池化保留；
+         * 2) 新分组卡片出现时，若池里有对应节点，立即摘掉尚未加载完的新 img
+         *    （同时停掉面板的多源 onerror 回退链）并换回池中节点 + has-img，
+         *    已解码图片重复挂载为同步显示，切组图标零等待；拖拽排序导致的
+         *    节点移除再插回也能自动补回；
+         * 3) 页面数据就绪后低并发（4）后台预热未访问分组的 image / favicon 图标，
+         *    首次切过去也无需等待；上限 240 个，避免对第三方 favicon 源造成突发。
+         */
+        private val ICON_POOL_JS =
+            "(function(){" +
+                "function spBoot(){" +
+                "if(window.__spIconPool){try{window.__spIconPool.scan();}catch(e){}return;}" +
+                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=3500;" +
+                "var pool=new Map();" +
+                "var resolved=Object.create(null);" +
+                "var bound=Object.create(null);" +
+                "var scanT=0,wrapObs=null;" +
+                "function safe(fn){try{fn();}catch(e){}}" +
+                "function putPool(id,node){" +
+                "if(!node){return;}" +
+                "if(pool.has(id)){pool.delete(id);}" +
+                "pool.set(id,node);" +
+                "while(pool.size>CAP){pool.delete(pool.keys().next().value);}}" +
+                // 从被移除的子树中抢救已解码 img（含拖拽排序后同节点再插回的情况）
+                "function harvest(nodes){" +
+                "if(!nodes||!nodes.length){return;}" +
+                "for(var n=0;n<nodes.length;n++){" +
+                "(function(node){" +
+                "if(node.nodeType!==1){return;}" +
+                "var cards=(node.matches&&node.matches('a.card[data-id]'))?[node]:" +
+                "(node.querySelectorAll?node.querySelectorAll('a.card[data-id]'):[]);" +
+                "for(var i=0;i<cards.length;i++){(function(card){" +
+                "var id=String(card.getAttribute('data-id'));" +
+                "var img=card.querySelector('.icon img');" +
+                "if(img&&img.src&&img.complete&&img.naturalWidth>0){" +
+                "resolved[id]=img.src;" +
+                "if(img.parentNode){img.parentNode.removeChild(img);}" +
+                "putPool(id,img);}" +
+                "})(cards[i]);}" +
+                "})(nodes[n]);}}" +
+                "function cloneToPool(id,src){" +
+                "if(!src||pool.has(id)){return;}" +
+                "var im=new Image();" +
+                "im.alt='';" +
+                "try{im.referrerPolicy='no-referrer';}catch(e){}" +
+                "im.onload=function(){if(im.naturalWidth>0){putPool(id,im);}};" +
+                "im.src=src;}" +
+                "function bindFresh(id,img){" +
+                "if(bound[id]===img){return;}" +
+                "bound[id]=img;" +
+                "img.addEventListener('load',function(){" +
+                "bound[id]=null;" +
+                "if(img.naturalWidth>0&&img.src){resolved[id]=img.src;cloneToPool(id,img.src);}});" +
+                "img.addEventListener('error',function(){bound[id]=null;});}" +
+                "function doScan(){" +
+                "var wrap=document.getElementById('groupsWrap');" +
+                "if(!wrap||!wrap.querySelectorAll){return;}" +
+                "var cards=wrap.querySelectorAll('a.card[data-id]');" +
+                "for(var i=0;i<cards.length;i++){(function(card){" +
+                "var id=String(card.getAttribute('data-id'));" +
+                "var icon=card.querySelector('.icon');" +
+                "if(!icon){return;}" +
+                "var img=icon.querySelector('img');" +
+                "if(pool.has(id)){" +
+                "if(!img){icon.appendChild(pool.get(id));icon.classList.add('has-img');}" +
+                "else if(!img.complete||img.naturalWidth===0){" +
+                "var node=pool.get(id);" +
+                "try{img.onload=null;img.onerror=null;}catch(e){}" +
+                "if(img.parentNode===icon){icon.removeChild(img);}" +
+                "icon.appendChild(node);icon.classList.add('has-img');" +
+                "}" +
+                "return;}" +
+                "if(!img){return;}" +
+                "if(img.complete&&img.naturalWidth>0){" +
+                "resolved[id]=img.src;cloneToPool(id,img.src);" +
+                "}else{bindFresh(id,img);}" +
+                "})(cards[i]);}}" +
+                "function scheduleScan(){" +
+                "clearTimeout(scanT);" +
+                "scanT=setTimeout(function(){safe(doScan);},30);}" +
+                "function ensureWrap(){" +
+                "var wrap=document.getElementById('groupsWrap');" +
+                "if(!wrap){setTimeout(ensureWrap,400);return;}" +
+                "if(wrapObs){return;}" +
+                "wrapObs=new MutationObserver(function(muts){" +
+                "for(var i=0;i<muts.length;i++){(function(m){safe(function(){harvest(m.removedNodes);});})(muts[i]);}" +
+                "scheduleScan();});" +
+                "wrapObs.observe(wrap,{childList:true,subtree:true});" +
+                "doScan();}" +
+                // ---- 后台预热：复用面板自身的 assetUrl / faviconSources，回退顺序与卡片一致 ----
+                "function itemSrcs(item){" +
+                "try{" +
+                "if(item.icon_type==='image'&&item.icon_value&&typeof assetUrl==='function'){" +
+                "return [assetUrl(item.icon_value)];}" +
+                "if(item.icon_type==='favicon'&&(item.url||item.lan_url)&&typeof faviconSources==='function'){" +
+                "return faviconSources(item.url||item.lan_url)||[];}" +
+                "}catch(e){}" +
+                "return [];}" +
+                "var preStarted=false,preQueue=[],preIdx=0,preRunning=0;" +
+                "function loadOne(job,done){" +
+                "var si=0;" +
+                "(function next(){" +
+                "if(pool.has(job.id)||resolved[job.id]){done();return;}" +
+                "if(si>=job.srcs.length){done();return;}" +
+                "var url=job.srcs[si];si++;" +
+                "var im=new Image();" +
+                "im.alt='';" +
+                "try{im.referrerPolicy='no-referrer';}catch(e){}" +
+                "im.onload=function(){" +
+                "if(im.naturalWidth>0){resolved[job.id]=im.src;putPool(job.id,im);done();}" +
+                "else{next();}};" +
+                "im.onerror=function(){next();};" +
+                "im.src=url;})();}" +
+                "function prePump(){" +
+                "while(preRunning<PRE_CONC&&preIdx<preQueue.length&&preIdx<PRE_MAX){" +
+                "preRunning++;" +
+                "loadOne(preQueue[preIdx++],function(){preRunning--;prePump();});}}" +
+                "function preTick(tries){" +
+                "if(preStarted){return;}" +
+                "var ready=false;" +
+                "try{" +
+                "if(typeof state!=='undefined'&&state&&state.groups&&state.groups.length){ready=true;}" +
+                "}catch(e){}" +
+                "if(!ready){" +
+                "if(tries>0){setTimeout(function(){preTick(tries-1);},2000);}" +
+                "return;}" +
+                "preStarted=true;" +
+                "setTimeout(function(){" +
+                "safe(function(){" +
+                "state.groups.forEach(function(g){" +
+                "(g.items||[]).forEach(function(it){" +
+                "var id=String(it.id);" +
+                "if(resolved[id]||pool.has(id)){return;}" +
+                "var srcs=itemSrcs(it);" +
+                "if(srcs.length){preQueue.push({id:id,srcs:srcs});}});});" +
+                "prePump();});" +
+                "},PRE_DELAY);}" +
+                "window.__spIconPool={scan:function(){safe(doScan);}};" +
+                "ensureWrap();" +
+                "preTick(30);" +
                 "}" +
                 "spBoot();" +
                 "})();"

@@ -156,9 +156,10 @@ class MainActivity : AppCompatActivity() {
         webView = binding.webView
         setContentView(binding.root)
 
-        // 品牌开屏：从透明淡入，最短展示 1.6s 后淡出，露出 WebView 内容
-        binding.splashBrand.alpha = 0f
-        binding.splashBrand.animate().alpha(1f).setDuration(350).start()
+        // 品牌开屏：背景层全程不透明（与系统闪屏/根布局同为 app_background，
+        // 交棒无色差），仅对文字组做淡入，避免整层白底动画导致的闪屏
+        binding.splashBrandContent.alpha = 0f
+        binding.splashBrandContent.animate().alpha(1f).setDuration(500).start()
         scheduleSplashDismiss()
 
         configureInsets()
@@ -234,6 +235,10 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
+        // 页面加载前保持透明，露出根布局 app_background，
+        // 与开屏品牌层同色，品牌页移除瞬间不会出现 米→白 跳变
+        webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
         val settings = webView.settings
 
         settings.javaScriptEnabled = true
@@ -1588,10 +1593,10 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
     }
 
-    /** 品牌开屏：最短展示后淡出并移除，露出网页/配置页 */
+    /** 品牌开屏：最短展示后仅淡出文字组，再隐藏整层（背景同色，隐藏无跳变） */
     private fun scheduleSplashDismiss() {
         Handler(Looper.getMainLooper()).postDelayed({
-            binding.splashBrand.animate()
+            binding.splashBrandContent.animate()
                 .alpha(0f)
                 .setDuration(SPLASH_FADE_MS)
                 .withEndAction {

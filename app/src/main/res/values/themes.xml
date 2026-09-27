@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- 冷启动开屏：纯白底，不显示图标，由代码动态展示 SolarPanel 文字品牌页 -->
+    <!-- 冷启动开屏：背景与应用根布局同色（米白），交棒无色差不闪屏；图标透明不显示 -->
     <style name="Theme.Solarpanel.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/white</item>
+        <item name="windowSplashScreenBackground">@color/app_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_empty</item>
         <item name="postSplashScreenTheme">@style/Theme.Solarpanel</item>
     </style>

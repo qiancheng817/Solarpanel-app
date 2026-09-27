@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">solarpanel</string>
+    <string name="splash_title">SolarPanel</string>
+    <string name="splash_tagline">你的自托管导航面板</string>
 
     <!-- 首次配置 -->
     <string name="setup_title">连接到你的 solarpanel</string>

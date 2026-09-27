@@ -140,12 +140,12 @@ class MainActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 开屏：安装 SplashScreen 并保持最短展示时长，避免品牌页一闪而过
+        // 系统闪屏只短停留：纯白底 + 无图标，交棒给文字品牌页
         val splashScreen = installSplashScreen()
         val splashStart = SystemClock.elapsedRealtime()
         super.onCreate(savedInstanceState)
         splashScreen.setKeepOnScreenCondition {
-            SystemClock.elapsedRealtime() - splashStart < SPLASH_MIN_MS
+            SystemClock.elapsedRealtime() - splashStart < SPLASH_SYSTEM_MS
         }
 
         // 边到边布局：系统栏区域由各容器自行通过 inset 处理，
@@ -155,6 +155,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         webView = binding.webView
         setContentView(binding.root)
+
+        // 品牌开屏：从透明淡入，最短展示 1.6s 后淡出，露出 WebView 内容
+        binding.splashBrand.alpha = 0f
+        binding.splashBrand.animate().alpha(1f).setDuration(350).start()
+        scheduleSplashDismiss()
 
         configureInsets()
         configureWebView()
@@ -1583,6 +1588,19 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
     }
 
+    /** 品牌开屏：最短展示后淡出并移除，露出网页/配置页 */
+    private fun scheduleSplashDismiss() {
+        Handler(Looper.getMainLooper()).postDelayed({
+            binding.splashBrand.animate()
+                .alpha(0f)
+                .setDuration(SPLASH_FADE_MS)
+                .withEndAction {
+                    binding.splashBrand.isVisible = false
+                }
+                .start()
+        }, SPLASH_BRAND_MS)
+    }
+
     // ------------------------------------------------------------------
     // 常量
     // ------------------------------------------------------------------
@@ -1591,7 +1609,9 @@ class MainActivity : AppCompatActivity() {
 
         private const val DOUBLE_BACK_INTERVAL_MS = 2000L
         private const val TOP_BAR_ANIM_MS = 180L
-        private const val SPLASH_MIN_MS = 1200L
+        private const val SPLASH_SYSTEM_MS = 300L
+        private const val SPLASH_BRAND_MS = 1600L
+        private const val SPLASH_FADE_MS = 450L
 
         private const val MAX_RENDERER_AUTO_RECOVERIES = 2
         private const val RENDERER_CRASH_WINDOW_MS = 30_000L

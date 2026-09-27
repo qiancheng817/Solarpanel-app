@@ -38,8 +38,6 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.ServiceWorkerClient
-import android.webkit.ServiceWorkerController
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -169,7 +167,6 @@ class MainActivity : AppCompatActivity() {
 
         configureInsets()
         configureWebView()
-        configureIconCache()
         configureWebChromeClient()
         configureWebViewClient()
         configureDownloadListener()
@@ -283,8 +280,6 @@ class MainActivity : AppCompatActivity() {
 
         // 暴露给网页的最小接口：上报滚动方向、异步清理完成事件
         webView.addJavascriptInterface(ScrollBridge(), "SolarpanelHost")
-        // 图标磁盘缓存的 JS 查询口：命中返回 data URL，页面零网络请求秒显示
-        webView.addJavascriptInterface(IconBridge(), "SpIconCache")
     }
 
     /**
@@ -307,47 +302,6 @@ class MainActivity : AppCompatActivity() {
         }
         webView.settings.userAgentString = userAgent
     }
-
-    /**
-     * 启用卡片图标原生磁盘缓存（详见 IconCache）。
-     * 页面子资源由 WebViewClient.shouldInterceptRequest 拦截；面板 Service Worker
-     * 发起的 fetch（favicon 多源回退、/uploads/ 的 network-first）只经过
-     * ServiceWorkerClient，必须在这里单独接入同一个缓存。
-     */
-    private fun configureIconCache() {
-        IconCache.init(this)
-        try {
-            // SW 回调在非 UI 线程触发，这里提前在 UI 线程取出 UA，
-            // 避免回调内访问 webView（跨线程调 WebView 方法会直接崩溃）
-            val swUserAgent = webView.settings.userAgentString
-            ServiceWorkerController.getInstance().setServiceWorkerClient(
-                object : ServiceWorkerClient() {
-                    override fun shouldInterceptRequest(
-                        request: WebResourceRequest
-                    ): WebResourceResponse? {
-                        return try {
-                            IconCache.intercept(
-                                this@MainActivity,
-                                request,
-                                currentPanelHost(),
-                                swUserAgent,
-                                fromServiceWorker = true
-                            )
-                        } catch (t: Throwable) {
-                            null
-                        }
-                    }
-                }
-            )
-            IconCache.markSwRegistration(true, null)
-        } catch (t: Throwable) {
-            // 极少数禁用 SW 的环境下退回仅页面侧拦截，不影响正常使用
-            IconCache.markSwRegistration(false, t.javaClass.simpleName + ": " + t.message)
-        }
-    }
-
-    private fun currentPanelHost(): String? =
-        Prefs.getServer(this).takeIf { it.isNotEmpty() }?.let { Uri.parse(it).host }
 
     private fun configureWebChromeClient() {
         webView.webChromeClient = object : WebChromeClient() {
@@ -416,15 +370,6 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
-                // 卡片图标原生磁盘缓存（favicon 第三方源 + 面板 /uploads/），
-                // 覆盖 SW 未生效/不接管的页面子资源请求
-                IconCache.intercept(
-                    this@MainActivity,
-                    request,
-                    currentPanelHost(),
-                    userAgent,
-                    fromServiceWorker = false
-                )?.let { return it }
                 if (!request.isForMainFrame) {
                     return null // 只拦主文档，子资源放行
                 }
@@ -997,7 +942,6 @@ class MainActivity : AppCompatActivity() {
      */
     private fun injectIconPool() {
         webView.evaluateJavascript(ICON_POOL_JS, null)
-        webView.evaluateJavascript(ICON_INSTANT_JS, null)
     }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
@@ -1047,16 +991,6 @@ class MainActivity : AppCompatActivity() {
                 swCleanupContinuation = null
                 continuation?.run()
             }
-        }
-    }
-
-    /** 图标磁盘缓存的 JS 查询口：运行在 JS Bridge 线程，仅做只读磁盘查询。 */
-    private inner class IconBridge {
-
-        @JavascriptInterface
-        fun get(url: String?): String? {
-            if (url.isNullOrEmpty() || url.length > 2048) return null
-            return IconCache.dataUrlFor(this@MainActivity, url, currentPanelHost())
         }
     }
 
@@ -1361,7 +1295,6 @@ class MainActivity : AppCompatActivity() {
             webView.clearFormData()
 
             WebStorage.getInstance().deleteAllData()
-            IconCache.clear()
 
             toast(R.string.toast_cleared)
             val server = Prefs.getServer(this)
@@ -1393,10 +1326,7 @@ class MainActivity : AppCompatActivity() {
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.about_title)
-            .setMessage(
-                getString(R.string.about_message, BuildConfig.VERSION_NAME, server) +
-                    "\n\n" + IconCache.statsText()
-            )
+            .setMessage(getString(R.string.about_message, BuildConfig.VERSION_NAME, server))
             .setPositiveButton(R.string.dialog_ok, null)
             .setNeutralButton(R.string.menu_check_update) { _, _ ->
                 checkUpdateFromUser()
@@ -1946,15 +1876,13 @@ class MainActivity : AppCompatActivity() {
          *    已解码图片重复挂载为同步显示，切组图标零等待；拖拽排序导致的
          *    节点移除再插回也能自动补回；
          * 3) 页面数据就绪后低并发（4）后台预热未访问分组的 image / favicon 图标，
-         *    首次切过去也无需等待；预热顺序从当前分组的下一组开始循环，
-         *    数据到达 600ms 即启动；上限 240 个，避免对第三方 favicon 源造成突发。
-         *    配合原生 IconCache（磁盘持久），冷启动预热同样近乎瞬时完成。
+         *    首次切过去也无需等待；上限 240 个，避免对第三方 favicon 源造成突发。
          */
         private val ICON_POOL_JS =
             "(function(){" +
                 "function spBoot(){" +
                 "if(window.__spIconPool){try{window.__spIconPool.scan();}catch(e){}return;}" +
-                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=600;" +
+                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=3500;" +
                 "var pool=new Map();" +
                 "var resolved=Object.create(null);" +
                 "var bound=Object.create(null);" +
@@ -2071,15 +1999,7 @@ class MainActivity : AppCompatActivity() {
                 "preStarted=true;" +
                 "setTimeout(function(){" +
                 "safe(function(){" +
-                // 冷启动后优先预热「下一个分组起」的图标（当前分组已在渲染，排最后），
-                // 用户冷启动后立刻切组时目标图标最先完成解码入池
-                "var preGroups;" +
-                "try{" +
-                "var all=(state.groups||[]);var li=JSON.parse(localStorage.getItem('sp_nav_group_v1')||'null');" +
-                "var cur=(li&&typeof li.idx==='number'&&li.idx>=0&&li.idx<all.length)?li.idx:0;" +
-                "preGroups=all.slice(cur+1).concat(all.slice(0,cur+1));" +
-                "}catch(e){preGroups=(state.groups||[]).slice();}" +
-                "preGroups.forEach(function(g){" +
+                "state.groups.forEach(function(g){" +
                 "(g.items||[]).forEach(function(it){" +
                 "var id=String(it.id);" +
                 "if(resolved[id]||pool.has(id)){return;}" +
@@ -2092,52 +2012,6 @@ class MainActivity : AppCompatActivity() {
                 "preTick(30);" +
                 "}" +
                 "spBoot();" +
-                "})();"
-
-        /**
-         * 图标秒显：面板每次重建卡片都会新建 <img> 并发起请求，即使原生磁盘缓存
-         * 命中也要走一遍「请求→onload」异步流程，视觉上仍会闪。本脚本用
-         * MutationObserver 盯住 DOM，新 img 一出现就同步查询原生 IconCache
-         * （JS Bridge），命中直接把 src 换成 data URL——零网络请求、零等待，
-         * 图标随卡片渲染同时出现。未命中不影响原流程（照常走网络并落盘缓存）。
-         * 幂等：重复注入直接返回；src 被换成 data: 后不再处理，不会自循环。
-         */
-        private val ICON_INSTANT_JS =
-            "(function(){" +
-                "if(window.__spIconInstant){return;}" +
-                "window.__spIconInstant=1;" +
-                "var HOSTS={'favicon.cccyun.cc':1,'icon.horse':1,'favicon.im':1,'www.google.com':1};" +
-                "function isIcon(u){" +
-                "if(!u||u.lastIndexOf('data:',0)===0){return false;}" +
-                "try{" +
-                "var x=new URL(u,location.href);" +
-                "if(HOSTS[x.hostname]){return true;}" +
-                "return x.origin===location.origin&&" +
-                "(x.pathname.indexOf('/uploads/')===0||x.pathname.indexOf('/frontend/uploads/')===0);" +
-                "}catch(e){return false;}}" +
-                "function swap(img){" +
-                "if(!img||!img.getAttribute){return;}" +
-                "var s=img.getAttribute('src');" +
-                "if(!isIcon(s)){return;}" +
-                "try{" +
-                "var d=window.SpIconCache&&window.SpIconCache.get(s);" +
-                "if(d&&d.lastIndexOf('data:',0)===0){img.src=d;}" +
-                "}catch(e){}}" +
-                "function walk(root){" +
-                "if(!root||root.nodeType!==1){return;}" +
-                "if(root.tagName==='IMG'){swap(root);}" +
-                "var list=root.querySelectorAll?root.querySelectorAll('img'):[];" +
-                "for(var i=0;i<list.length;i++){swap(list[i]);}}" +
-                "try{" +
-                "new MutationObserver(function(muts){" +
-                "for(var i=0;i<muts.length;i++){" +
-                "var m=muts[i];" +
-                "if(m.type==='attributes'){swap(m.target);}" +
-                "else{for(var j=0;j<m.addedNodes.length;j++){walk(m.addedNodes[j]);}}}" +
-                "}).observe(document.documentElement," +
-                "{childList:true,subtree:true,attributes:true,attributeFilter:['src']});" +
-                "}catch(e){}" +
-                "walk(document.body||document.documentElement);" +
                 "})();"
 
         /**

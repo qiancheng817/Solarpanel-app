@@ -283,6 +283,8 @@ class MainActivity : AppCompatActivity() {
 
         // 暴露给网页的最小接口：上报滚动方向、异步清理完成事件
         webView.addJavascriptInterface(ScrollBridge(), "SolarpanelHost")
+        // 图标磁盘缓存的 JS 查询口：命中返回 data URL，页面零网络请求秒显示
+        webView.addJavascriptInterface(IconBridge(), "SpIconCache")
     }
 
     /**
@@ -995,6 +997,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun injectIconPool() {
         webView.evaluateJavascript(ICON_POOL_JS, null)
+        webView.evaluateJavascript(ICON_INSTANT_JS, null)
     }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
@@ -1044,6 +1047,16 @@ class MainActivity : AppCompatActivity() {
                 swCleanupContinuation = null
                 continuation?.run()
             }
+        }
+    }
+
+    /** 图标磁盘缓存的 JS 查询口：运行在 JS Bridge 线程，仅做只读磁盘查询。 */
+    private inner class IconBridge {
+
+        @JavascriptInterface
+        fun get(url: String?): String? {
+            if (url.isNullOrEmpty() || url.length > 2048) return null
+            return IconCache.dataUrlFor(this@MainActivity, url, currentPanelHost())
         }
     }
 
@@ -2079,6 +2092,52 @@ class MainActivity : AppCompatActivity() {
                 "preTick(30);" +
                 "}" +
                 "spBoot();" +
+                "})();"
+
+        /**
+         * 图标秒显：面板每次重建卡片都会新建 <img> 并发起请求，即使原生磁盘缓存
+         * 命中也要走一遍「请求→onload」异步流程，视觉上仍会闪。本脚本用
+         * MutationObserver 盯住 DOM，新 img 一出现就同步查询原生 IconCache
+         * （JS Bridge），命中直接把 src 换成 data URL——零网络请求、零等待，
+         * 图标随卡片渲染同时出现。未命中不影响原流程（照常走网络并落盘缓存）。
+         * 幂等：重复注入直接返回；src 被换成 data: 后不再处理，不会自循环。
+         */
+        private val ICON_INSTANT_JS =
+            "(function(){" +
+                "if(window.__spIconInstant){return;}" +
+                "window.__spIconInstant=1;" +
+                "var HOSTS={'favicon.cccyun.cc':1,'icon.horse':1,'favicon.im':1,'www.google.com':1};" +
+                "function isIcon(u){" +
+                "if(!u||u.lastIndexOf('data:',0)===0){return false;}" +
+                "try{" +
+                "var x=new URL(u,location.href);" +
+                "if(HOSTS[x.hostname]){return true;}" +
+                "return x.origin===location.origin&&" +
+                "(x.pathname.indexOf('/uploads/')===0||x.pathname.indexOf('/frontend/uploads/')===0);" +
+                "}catch(e){return false;}}" +
+                "function swap(img){" +
+                "if(!img||!img.getAttribute){return;}" +
+                "var s=img.getAttribute('src');" +
+                "if(!isIcon(s)){return;}" +
+                "try{" +
+                "var d=window.SpIconCache&&window.SpIconCache.get(s);" +
+                "if(d&&d.lastIndexOf('data:',0)===0){img.src=d;}" +
+                "}catch(e){}}" +
+                "function walk(root){" +
+                "if(!root||root.nodeType!==1){return;}" +
+                "if(root.tagName==='IMG'){swap(root);}" +
+                "var list=root.querySelectorAll?root.querySelectorAll('img'):[];" +
+                "for(var i=0;i<list.length;i++){swap(list[i]);}}" +
+                "try{" +
+                "new MutationObserver(function(muts){" +
+                "for(var i=0;i<muts.length;i++){" +
+                "var m=muts[i];" +
+                "if(m.type==='attributes'){swap(m.target);}" +
+                "else{for(var j=0;j<m.addedNodes.length;j++){walk(m.addedNodes[j]);}}}" +
+                "}).observe(document.documentElement," +
+                "{childList:true,subtree:true,attributes:true,attributeFilter:['src']});" +
+                "}catch(e){}" +
+                "walk(document.body||document.documentElement);" +
                 "})();"
 
         /**

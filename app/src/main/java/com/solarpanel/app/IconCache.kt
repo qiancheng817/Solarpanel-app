@@ -131,6 +131,32 @@ object IconCache {
         }
     }
 
+    /**
+     * 供 JS Bridge 同步查询：磁盘命中则返回 data URL（页面直接设为 img.src，
+     * 完全不产生网络请求），未命中返回 null 走正常网络流程。
+     */
+    fun dataUrlFor(context: Context, urlString: String, panelHost: String?): String? {
+        return try {
+            val uri = Uri.parse(urlString) ?: return null
+            if (!shouldHandle(uri, panelHost)) return null
+            init(context)
+            val base = dir ?: return null
+            val key = sha256(urlString)
+            val dataFile = File(base, key)
+            if (!dataFile.isFile || dataFile.length() == 0L) return null
+            val bytes = dataFile.readBytes()
+            val mime = File(base, "$key.m").takeIf { it.isFile }?.readText()
+                ?.takeIf { it.isNotBlank() }
+                ?: guessMime(urlString)
+            dataFile.setLastModified(System.currentTimeMillis())
+            bump(K_HITS)
+            "data:" + mime + ";base64," +
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
     private fun shouldHandle(uri: Uri, panelHost: String?): Boolean {
         val scheme = uri.scheme ?: return false
         if (scheme != "http" && scheme != "https") return false

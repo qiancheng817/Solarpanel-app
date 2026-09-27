@@ -26,35 +26,6 @@
         android:padding="8dp"
         android:src="@drawable/ic_arrow_back" />
 
-    <!-- 开屏品牌页：系统 Splash 交棒后显示，最短停留后淡出 -->
-    <LinearLayout
-        android:id="@+id/splashBrand"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/white"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:visibility="visible">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:letterSpacing="0.02"
-            android:text="@string/splash_title"
-            android:textColor="@color/brand_blue_dark"
-            android:textSize="34sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/splash_tagline"
-            android:textColor="@color/app_text_secondary"
-            android:textSize="13sp" />
-
-    </LinearLayout>
-
     <!--
         网页容器。顶栏展开时整体下推一个顶栏高度（translationY），
         网页顶部不会被顶栏挡住；顶栏收起时位移归零，不触发网页回流。
@@ -238,6 +209,45 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="@string/err_change" />
+
+    </LinearLayout>
+
+    <!--
+        开屏品牌页：必须是最后一个子 View（FrameLayout 中后添加的层级更高），
+        覆盖在 WebView / 配置页 / 错误页之上；系统 Splash 交棒后淡入，
+        最短展示后由代码淡出移除。
+    -->
+    <LinearLayout
+        android:id="@+id/splashBrand"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/white"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:letterSpacing="0.18"
+            android:text="@string/splash_title"
+            android:textColor="@color/brand_blue_dark"
+            android:textSize="21sp" />
+
+        <View
+            android:layout_width="22dp"
+            android:layout_height="1.5dp"
+            android:layout_marginTop="14dp"
+            android:alpha="0.75"
+            android:background="@color/brand_tan" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:letterSpacing="0.06"
+            android:text="@string/splash_tagline"
+            android:textColor="@color/app_text_secondary"
+            android:textSize="11.5sp" />
 
     </LinearLayout>
 

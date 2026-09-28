@@ -1882,7 +1882,7 @@ class MainActivity : AppCompatActivity() {
             "(function(){" +
                 "function spBoot(){" +
                 "if(window.__spIconPool){try{window.__spIconPool.scan();}catch(e){}return;}" +
-                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=3500;" +
+                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=600;" +
                 "var pool=new Map();" +
                 "var resolved=Object.create(null);" +
                 "var bound=Object.create(null);" +
@@ -1999,7 +1999,15 @@ class MainActivity : AppCompatActivity() {
                 "preStarted=true;" +
                 "setTimeout(function(){" +
                 "safe(function(){" +
-                "state.groups.forEach(function(g){" +
+                // 冷启动后优先预热「下一个分组起」的图标（当前分组已在渲染，排最后），
+                // 用户冷启动后立刻切组时目标图标最先完成解码入池
+                "var preGroups;" +
+                "try{" +
+                "var all=(state.groups||[]);var li=JSON.parse(localStorage.getItem('sp_nav_group_v1')||'null');" +
+                "var cur=(li&&typeof li.idx==='number'&&li.idx>=0&&li.idx<all.length)?li.idx:0;" +
+                "preGroups=all.slice(cur+1).concat(all.slice(0,cur+1));" +
+                "}catch(e){preGroups=(state.groups||[]).slice();}" +
+                "preGroups.forEach(function(g){" +
                 "(g.items||[]).forEach(function(it){" +
                 "var id=String(it.id);" +
                 "if(resolved[id]||pool.has(id)){return;}" +

@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity() {
         webView.setBackgroundColor(ContextCompat.getColor(this, R.color.app_background))
         WebView.setWebContentsDebuggingEnabled(false)
 
-        // 暴露给网页的最小接口：上报滚动方向、异步清理完成事件
+        // 暴露给网页的最小接口：PWA 缓存异步清理完成事件
         webView.addJavascriptInterface(ScrollBridge(), "SolarpanelHost")
     }
 
@@ -315,13 +315,10 @@ class MainActivity : AppCompatActivity() {
                         binding.progressBar.visibility = View.VISIBLE
                     }
                 }
-                // 加载过程中提前注入：面板 HTML 一旦解析出 head/下拉框，
-                // 样式立即生效，避免首开先看到老样式、刷新才正常。
-                // 三个脚本均幂等，重复调用无副作用。
+                // 加载过程中提前注入：面板 HTML 一旦解析出 head，
+                // 样式立即生效，避免首开先看到老样式、刷新才正常。幂等，可重复调用。
                 if (newProgress in 20..99) {
                     injectPanelCssFix()
-                    injectGroupNav()
-                    injectIconPool()
                 }
             }
 
@@ -413,16 +410,12 @@ class MainActivity : AppCompatActivity() {
                     hideErrorPanel()
                 }
                 injectPanelCssFix()
-                injectGroupNav()
-                injectIconPool()
                 updateCloseButton()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次
                 injectPanelCssFix()
-                injectGroupNav()
-                injectIconPool()
                 updateCloseButton()
             }
 
@@ -923,25 +916,6 @@ class MainActivity : AppCompatActivity() {
     /** 注入面板手机端适配样式，详见 PANEL_CSS_FIX_JS。 */
     private fun injectPanelCssFix() {
         webView.evaluateJavascript(PANEL_CSS_FIX_JS, null)
-    }
-
-    /**
-     * 注入图标胶囊分组条，详见 GROUP_NAV_JS：
-     * 一行 5 个图标胶囊、可点可滑；屏幕左右滑动切换分组；记忆当前分组，
-     * 从卡片返回时恢复到该卡片所在分组。脚本自启动并等待面板数据，可重复注入。
-     */
-    private fun injectGroupNav() {
-        webView.evaluateJavascript(GROUP_NAV_JS, null)
-    }
-
-    /**
-     * 注入卡片图标池，详见 ICON_POOL_JS：
-     * nav 模式每切一次分组面板都会清空重建 #groupsWrap，全新 <img> 要重新请求
-     * favicon / 重新等多源回退，图标总要"加载一下"才出现。池化已解码的 img
-     * 节点后，切组重建时同步换回，图标即时显示；并在后台低并发预热其余分组。
-     */
-    private fun injectIconPool() {
-        webView.evaluateJavascript(ICON_POOL_JS, null)
     }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
@@ -1695,331 +1669,6 @@ class MainActivity : AppCompatActivity() {
                 ".card.app-card .info .t{font-size:12px;max-width:88px;}" +
                 "}';" +
                 "(document.head||document.documentElement).appendChild(s);" +
-                "})();"
-
-        /**
-         * 图标胶囊分组条（nav 模式手机端）：
-         * - 一行 5 个；图标优先取面板 v2.1.16+ 分组图标库为每个分组配置的图标
-         *   （state.groups[*].icon，option.value 即 groups 下标，不发起额外网络请求）；
-         *   旧版面板 / 未配置库图标的分组依次回退：分组标题前的 emoji →
-         *   标题首字色块，该分组卡片渲染后再自动升级为第一张卡片的真实图标。
-         *   超过 5 个可横向滑动胶囊条查看更多。
-         * - 点击胶囊切换分组；在网页区域左右滑动屏幕也可切换上/下一个分组。
-         * - 当前分组写入 localStorage，页面因打开卡片而跳走、再返回时恢复到
-         *   该卡片所在分组，而不是默认第一个。
-         * 脚本通过 MutationObserver + 轮询等待面板异步渲染，幂等，可重复注入。
-         */
-        private val GROUP_NAV_JS =
-            "(function(){" +
-                "function spBoot(){" +
-                "if(window.__spGroupNav){try{window.__spGroupNav.fix();}catch(e){}return;}" +
-                "var LS_KEY='sp_nav_group_v1',EDGE=34,TH=42;" +
-                "var st=document.createElement('style');" +
-                "st.textContent=[" +
-                "'#spGroupBar{margin:0;padding:2px 0 10px;}'," +
-                "'#spGroupBar .sp-track{display:flex;gap:4px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;}'," +
-                "'#spGroupBar .sp-track::-webkit-scrollbar{display:none;}'," +
-                "'#spGroupBar .sp-cap{flex:0 0 calc((100% - 16px)/5);scroll-snap-align:center;display:flex;align-items:center;justify-content:center;}'," +
-                "'#spGroupBar .sp-in{width:46px;height:46px;border-radius:999px;background:var(--surface,#fff);border:1.5px solid var(--edge,#ddd);display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;}'," +
-                "'#spGroupBar .sp-in img{width:100%;height:100%;object-fit:cover;border-radius:999px;}'," +
-                "'#spGroupBar .sp-in .sp-tx{font-size:15px;font-weight:600;color:#fff;line-height:1;}'," +
-                "'#spGroupBar .sp-in .sp-em{font-size:24px;line-height:1;}'," +
-                "'#spGroupBar .sp-cap.active .sp-in{border-color:var(--accent,#3b82f6);border-width:2px;}'," +
-                "'#navbarSelect{display:none !important;}'" +
-                "].join('');" +
-                "(document.head||document.documentElement).appendChild(st);" +
-                "var bar=document.createElement('div');bar.id='spGroupBar';bar.style.display='none';" +
-                "var track=document.createElement('div');track.className='sp-track';bar.appendChild(track);" +
-                "var sel=null,restored=false,observer=null,pending=false,upgraded={};" +
-                "function safe(fn){try{fn();}catch(e){}}" +
-                "function leadingEmoji(title){" +
-                "var m=/^\\s*(\\p{Extended_Pictographic})/u.exec(title);" +
-                "if(!m){return null;}" +
-                "var end=m.index+m[0].length;" +
-                "while(end<title.length){" +
-                "var cp=title.codePointAt(end);" +
-                "if(cp===0xFE0F||cp===0x200D||(cp>=0x1F3FB&&cp<=0x1F3FF)||(cp>=0xE0020&&cp<=0xE007F)){" +
-                "end+=cp>0xFFFF?2:1;" +
-                "if(cp===0x200D){var m2=/^\\p{Extended_Pictographic}/u.exec(title.slice(end));" +
-                "if(m2){end+=m2[0].length;}else{break;}}" +
-                "}else{break;}}" +
-                "return title.slice(m.index,end);}" +
-                "function titleInitials(text){" +
-                "var em=leadingEmoji(text);" +
-                "var body=em?text.slice(em.length):text;" +
-                "body=body.replace(/[\\s\\p{P}\\p{S}]/gu,'');" +
-                "if(!body){body=String(text||'?');}" +
-                "return Array.from(body).slice(0,2).join('');}" +
-                // 面板 v2.1.16+ 分组图标库：option.value 即 state.groups 下标，
-                // 直接读取该分组在图标库中配置的 icon；旧版面板无此数据时回退 null。
-                "function groupIcon(opt){" +
-                "try{" +
-                "if(typeof state!=='undefined'&&state&&state.groups&&state.groups.length){" +
-                "var g=state.groups[+opt.value];" +
-                "if(g&&g.icon){return String(g.icon);}" +
-                "}}" +
-                "catch(e){}" +
-                "return null;}" +
-                "function fillCap(inEl,text,libIcon){" +
-                "var em=libIcon||leadingEmoji(text);" +
-                "if(em){" +
-                "var es=document.createElement('span');es.className='sp-em';es.textContent=em;inEl.appendChild(es);" +
-                "}else{" +
-                "inEl.style.background=window.stringColor?stringColor(text||'?'):'#6b7280';" +
-                "var tx=document.createElement('span');tx.className='sp-tx';tx.textContent=titleInitials(text);inEl.appendChild(tx);}}" +
-                "function syncActive(val,scroll){" +
-                "var caps=track.children;" +
-                "for(var i=0;i<caps.length;i++){caps[i].classList.toggle('active',i===val);}" +
-                "if(scroll&&caps[val]){caps[val].scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}}" +
-                "function rebuild(){" +
-                "if(!sel||!sel.options||!sel.options.length){bar.style.display='none';return;}" +
-                "var prevLeft=track.scrollLeft;track.innerHTML='';var sig='';" +
-                "for(var i=0;i<sel.options.length;i++){(function(idx){" +
-                "sig+=sel.options[idx].textContent+'|';" +
-                "var cap=document.createElement('div');cap.className='sp-cap';" +
-                "var inEl=document.createElement('span');inEl.className='sp-in';" +
-                "fillCap(inEl,sel.options[idx].textContent,groupIcon(sel.options[idx]));cap.appendChild(inEl);" +
-                "cap.addEventListener('click',function(){applySelect(idx);});" +
-                "track.appendChild(cap);})(i);}" +
-                "bar.setAttribute('data-sig',sig);" +
-                "syncActive(+sel.value,false);track.scrollLeft=prevLeft;" +
-                "if(!bar.parentNode&&sel.parentNode){sel.parentNode.insertBefore(bar,sel);}" +
-                "bar.style.display='block';" +
-                "scheduleUpgrade();}" +
-                "function upgradeActive(){" +
-                "var idx=+sel.value;if(upgraded[idx]){return;}" +
-                "var cap=track.children[idx];if(!cap){return;}" +
-                "var inEl=cap.querySelector('.sp-in');if(!inEl){return;}" +
-                "if(inEl.querySelector('.sp-em')){upgraded[idx]=true;return;}" +
-                "var icon=document.querySelector('#groupsWrap .cards .card .icon');if(!icon){return;}" +
-                "var img=icon.querySelector('img');" +
-                "if(img&&img.complete&&img.naturalWidth>0){" +
-                "var n=document.createElement('img');n.alt='';n.src=img.src;" +
-                "inEl.style.background='';inEl.innerHTML='';inEl.appendChild(n);" +
-                "upgraded[idx]=true;}}" +
-                "function scheduleUpgrade(){" +
-                "[200,600,1200,2200].forEach(function(d){setTimeout(function(){safe(upgradeActive);},d);});}" +
-                "function persist(){var idx=+sel.value;if(!sel.options[idx]){return;}" +
-                "try{localStorage.setItem(LS_KEY,JSON.stringify({idx:idx,title:sel.options[idx].textContent,t:Date.now()}));}catch(e){}}" +
-                "function applySelect(idx){if(!sel.options[idx]){return;}" +
-                "sel.value=String(idx);sel.dispatchEvent(new Event('change',{bubbles:true}));}" +
-                "function restore(){if(restored){return;}restored=true;" +
-                "var s=null;try{s=JSON.parse(localStorage.getItem(LS_KEY));}catch(e){}" +
-                "if(s&&typeof s.idx==='number'&&s.idx<sel.options.length&&(!s.title||sel.options[s.idx].textContent===s.title)){" +
-                "if(s.idx!==(+sel.value)){applySelect(s.idx);}" +
-                "else{var c=track.children[s.idx];if(c){c.scrollIntoView({inline:'center',block:'nearest'});}}}}" +
-                "function ensure(){safe(function(){" +
-                // 面板可能整体重建 <head> 里的内容，样式表被移除时补回去
-                "if(!st.isConnected){(document.head||document.documentElement).appendChild(st);}" +
-                "var cur=document.getElementById('navbarSelect');" +
-                // 面板数据到达后常把 select 节点整个替换；检测到换人就重新挂监听
-                "if(cur!==sel){" +
-                "sel=cur;" +
-                "if(observer){observer.disconnect();observer=null;}" +
-                "if(sel){" +
-                "observer=new MutationObserver(function(){schedule();});" +
-                "observer.observe(sel,{childList:true});" +
-                "sel.addEventListener('change',function(){safe(persist);syncActive(+sel.value,true);scheduleUpgrade();});" +
-                "}}" +
-                "if(!sel||!sel.options||!sel.options.length){if(bar.isConnected){bar.style.display='none';}return;}" +
-                // 胶囊条被一起清掉、位置错乱、数量不一致，或选项文案变化
-                // （图标库图标/标题在后台被修改、面板刷新数据）→ 整体重建
-                "var sig='';" +
-                "for(var si=0;si<sel.options.length;si++){sig+=sel.options[si].textContent+'|';}" +
-                "if(!bar.isConnected||bar.parentNode!==sel.parentNode||track.children.length!==sel.options.length||sig!==bar.getAttribute('data-sig')){rebuild();}" +
-                "else{bar.style.display='block';syncActive(+sel.value,false);}" +
-                "if(!restored){restore();}" +
-                "});}" +
-                "function schedule(){if(pending){return;}pending=true;" +
-                "setTimeout(function(){pending=false;ensure();},80);}" +
-                "window.__spGroupNav={fix:ensure};" +
-                "ensure();" +
-                // 前 20 秒高频巡检（面板首屏数据/Service Worker 双渲染都在此区间），
-                // 之后低频常驻：自愈开销极小，保证任何时候被面板重建都能自动恢复。
-                "var fastIv=setInterval(ensure,300);" +
-                "setTimeout(function(){clearInterval(fastIv);setInterval(ensure,1500);},20000);" +
-                "var x0=0,y0=0,dec=null,ign=false;" +
-                "document.addEventListener('touchstart',function(e){" +
-                "dec=null;ign=false;" +
-                "if(!sel||!sel.options.length||!bar.parentNode){ign=true;return;}" +
-                "var t=e.touches[0];" +
-                "if(t.clientX<EDGE||bar.contains(e.target)){ign=true;return;}" +
-                "var mm=document.getElementById('iframeModal');" +
-                "if(mm&&mm.classList.contains('show')){ign=true;return;}" +
-                "var at=document.activeElement;" +
-                "if(at&&(at.tagName==='INPUT'||at.tagName==='TEXTAREA'||at.tagName==='SELECT')){ign=true;return;}" +
-                "x0=t.clientX;y0=t.clientY;},{passive:true});" +
-                "document.addEventListener('touchmove',function(e){" +
-                "if(ign){return;}" +
-                "var t=e.touches[0],dx=t.clientX-x0,dy=t.clientY-y0;" +
-                "if(dec){e.preventDefault();return;}" +
-                "if(Math.abs(dx)>TH&&Math.abs(dx)>Math.abs(dy)*1.4){" +
-                "dec=dx<0?1:-1;" +
-                "var cur=+sel.value,n=cur+dec;" +
-                "if(n>=0&&n<sel.options.length){applySelect(n);}" +
-                "e.preventDefault();}},{passive:false});" +
-                "document.addEventListener('touchend',function(){dec=null;},{passive:true});" +
-                "document.addEventListener('touchcancel',function(){dec=null;},{passive:true});" +
-                "}" +
-                "spBoot();" +
-                "})();"
-
-        /**
-         * 卡片图标池（幂等，可重复注入）：
-         * 面板 nav 模式切换分组时 renderNavbarCardsOnly 会 wrap.innerHTML='' 重建
-         * 全部卡片，新 <img> 必须重新请求 favicon（甚至重新串行回退多个第三方源），
-         * 图标"加载一下"才出现。本脚本：
-         * 1) MutationObserver 监听 #groupsWrap：面板销毁旧分组时，从被移除的子树中
-         *    抢救已加载完成（已解码）的 <img> 节点，按卡片 data-id 池化保留；
-         * 2) 新分组卡片出现时，若池里有对应节点，立即摘掉尚未加载完的新 img
-         *    （同时停掉面板的多源 onerror 回退链）并换回池中节点 + has-img，
-         *    已解码图片重复挂载为同步显示，切组图标零等待；拖拽排序导致的
-         *    节点移除再插回也能自动补回；
-         * 3) 页面数据就绪后低并发（4）后台预热未访问分组的 image / favicon 图标，
-         *    首次切过去也无需等待；上限 240 个，避免对第三方 favicon 源造成突发。
-         */
-        private val ICON_POOL_JS =
-            "(function(){" +
-                "function spBoot(){" +
-                "if(window.__spIconPool){try{window.__spIconPool.scan();}catch(e){}return;}" +
-                "var CAP=300,PRE_MAX=240,PRE_CONC=4,PRE_DELAY=600;" +
-                "var pool=new Map();" +
-                "var resolved=Object.create(null);" +
-                "var bound=Object.create(null);" +
-                "var scanT=0,wrapObs=null;" +
-                "function safe(fn){try{fn();}catch(e){}}" +
-                "function putPool(id,node){" +
-                "if(!node){return;}" +
-                "if(pool.has(id)){pool.delete(id);}" +
-                "pool.set(id,node);" +
-                "while(pool.size>CAP){pool.delete(pool.keys().next().value);}}" +
-                // 从被移除的子树中抢救已解码 img（含拖拽排序后同节点再插回的情况）
-                "function harvest(nodes){" +
-                "if(!nodes||!nodes.length){return;}" +
-                "for(var n=0;n<nodes.length;n++){" +
-                "(function(node){" +
-                "if(node.nodeType!==1){return;}" +
-                "var cards=(node.matches&&node.matches('a.card[data-id]'))?[node]:" +
-                "(node.querySelectorAll?node.querySelectorAll('a.card[data-id]'):[]);" +
-                "for(var i=0;i<cards.length;i++){(function(card){" +
-                "var id=String(card.getAttribute('data-id'));" +
-                "var img=card.querySelector('.icon img');" +
-                "if(img&&img.src&&img.complete&&img.naturalWidth>0){" +
-                "resolved[id]=img.src;" +
-                "if(img.parentNode){img.parentNode.removeChild(img);}" +
-                "putPool(id,img);}" +
-                "})(cards[i]);}" +
-                "})(nodes[n]);}}" +
-                "function cloneToPool(id,src){" +
-                "if(!src||pool.has(id)){return;}" +
-                "var im=new Image();" +
-                "im.alt='';" +
-                "try{im.referrerPolicy='no-referrer';}catch(e){}" +
-                "im.onload=function(){if(im.naturalWidth>0){putPool(id,im);}};" +
-                "im.src=src;}" +
-                "function bindFresh(id,img){" +
-                "if(bound[id]===img){return;}" +
-                "bound[id]=img;" +
-                "img.addEventListener('load',function(){" +
-                "bound[id]=null;" +
-                "if(img.naturalWidth>0&&img.src){resolved[id]=img.src;cloneToPool(id,img.src);}});" +
-                "img.addEventListener('error',function(){bound[id]=null;});}" +
-                "function doScan(){" +
-                "var wrap=document.getElementById('groupsWrap');" +
-                "if(!wrap||!wrap.querySelectorAll){return;}" +
-                "var cards=wrap.querySelectorAll('a.card[data-id]');" +
-                "for(var i=0;i<cards.length;i++){(function(card){" +
-                "var id=String(card.getAttribute('data-id'));" +
-                "var icon=card.querySelector('.icon');" +
-                "if(!icon){return;}" +
-                "var img=icon.querySelector('img');" +
-                "if(pool.has(id)){" +
-                "if(!img){icon.appendChild(pool.get(id));icon.classList.add('has-img');}" +
-                "else if(!img.complete||img.naturalWidth===0){" +
-                "var node=pool.get(id);" +
-                "try{img.onload=null;img.onerror=null;}catch(e){}" +
-                "if(img.parentNode===icon){icon.removeChild(img);}" +
-                "icon.appendChild(node);icon.classList.add('has-img');" +
-                "}" +
-                "return;}" +
-                "if(!img){return;}" +
-                "if(img.complete&&img.naturalWidth>0){" +
-                "resolved[id]=img.src;cloneToPool(id,img.src);" +
-                "}else{bindFresh(id,img);}" +
-                "})(cards[i]);}}" +
-                "function scheduleScan(){" +
-                "clearTimeout(scanT);" +
-                "scanT=setTimeout(function(){safe(doScan);},30);}" +
-                "function ensureWrap(){" +
-                "var wrap=document.getElementById('groupsWrap');" +
-                "if(!wrap){setTimeout(ensureWrap,400);return;}" +
-                "if(wrapObs){return;}" +
-                "wrapObs=new MutationObserver(function(muts){" +
-                "for(var i=0;i<muts.length;i++){(function(m){safe(function(){harvest(m.removedNodes);});})(muts[i]);}" +
-                "scheduleScan();});" +
-                "wrapObs.observe(wrap,{childList:true,subtree:true});" +
-                "doScan();}" +
-                // ---- 后台预热：复用面板自身的 assetUrl / faviconSources，回退顺序与卡片一致 ----
-                "function itemSrcs(item){" +
-                "try{" +
-                "if(item.icon_type==='image'&&item.icon_value&&typeof assetUrl==='function'){" +
-                "return [assetUrl(item.icon_value)];}" +
-                "if(item.icon_type==='favicon'&&(item.url||item.lan_url)&&typeof faviconSources==='function'){" +
-                "return faviconSources(item.url||item.lan_url)||[];}" +
-                "}catch(e){}" +
-                "return [];}" +
-                "var preStarted=false,preQueue=[],preIdx=0,preRunning=0;" +
-                "function loadOne(job,done){" +
-                "var si=0;" +
-                "(function next(){" +
-                "if(pool.has(job.id)||resolved[job.id]){done();return;}" +
-                "if(si>=job.srcs.length){done();return;}" +
-                "var url=job.srcs[si];si++;" +
-                "var im=new Image();" +
-                "im.alt='';" +
-                "try{im.referrerPolicy='no-referrer';}catch(e){}" +
-                "im.onload=function(){" +
-                "if(im.naturalWidth>0){resolved[job.id]=im.src;putPool(job.id,im);done();}" +
-                "else{next();}};" +
-                "im.onerror=function(){next();};" +
-                "im.src=url;})();}" +
-                "function prePump(){" +
-                "while(preRunning<PRE_CONC&&preIdx<preQueue.length&&preIdx<PRE_MAX){" +
-                "preRunning++;" +
-                "loadOne(preQueue[preIdx++],function(){preRunning--;prePump();});}}" +
-                "function preTick(tries){" +
-                "if(preStarted){return;}" +
-                "var ready=false;" +
-                "try{" +
-                "if(typeof state!=='undefined'&&state&&state.groups&&state.groups.length){ready=true;}" +
-                "}catch(e){}" +
-                "if(!ready){" +
-                "if(tries>0){setTimeout(function(){preTick(tries-1);},2000);}" +
-                "return;}" +
-                "preStarted=true;" +
-                "setTimeout(function(){" +
-                "safe(function(){" +
-                // 冷启动后优先预热「下一个分组起」的图标（当前分组已在渲染，排最后），
-                // 用户冷启动后立刻切组时目标图标最先完成解码入池
-                "var preGroups;" +
-                "try{" +
-                "var all=(state.groups||[]);var li=JSON.parse(localStorage.getItem('sp_nav_group_v1')||'null');" +
-                "var cur=(li&&typeof li.idx==='number'&&li.idx>=0&&li.idx<all.length)?li.idx:0;" +
-                "preGroups=all.slice(cur+1).concat(all.slice(0,cur+1));" +
-                "}catch(e){preGroups=(state.groups||[]).slice();}" +
-                "preGroups.forEach(function(g){" +
-                "(g.items||[]).forEach(function(it){" +
-                "var id=String(it.id);" +
-                "if(resolved[id]||pool.has(id)){return;}" +
-                "var srcs=itemSrcs(it);" +
-                "if(srcs.length){preQueue.push({id:id,srcs:srcs});}});});" +
-                "prePump();});" +
-                "},PRE_DELAY);}" +
-                "window.__spIconPool={scan:function(){safe(doScan);}};" +
-                "ensureWrap();" +
-                "preTick(30);" +
-                "}" +
-                "spBoot();" +
                 "})();"
 
         /**

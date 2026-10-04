@@ -111,8 +111,6 @@ class MainActivity : AppCompatActivity() {
 
     /** 顶栏实测高度（含状态栏 inset，首次布局后取得）。 */
     private var topBarHeight = 0
-    private var topBarHidden = false
-    private var topBarSettled = false
 
     /** 渲染进程崩溃自动恢复计数：同一页面短时间连续崩溃超过上限就停止自动重载。 */
     private var lastRendererCrashedUrl: String? = null
@@ -172,7 +170,6 @@ class MainActivity : AppCompatActivity() {
         configureDownloadListener()
         configureToolbar()
         configureTopBar()
-        configureScrollHiding()
         configureBackHandling()
         configureSetupPanel()
         configureEdgeSwipe()
@@ -278,8 +275,8 @@ class MainActivity : AppCompatActivity() {
         webView.setBackgroundColor(ContextCompat.getColor(this, R.color.app_background))
         WebView.setWebContentsDebuggingEnabled(false)
 
-        // 暴露给网页的最小接口：PWA 缓存异步清理完成事件
-        webView.addJavascriptInterface(ScrollBridge(), "SolarpanelHost")
+        // 暴露给网页的最小桥接：PWA 缓存异步清理完成事件
+        webView.addJavascriptInterface(SwCleanupBridge(), "SolarpanelHost")
     }
 
     /**
@@ -393,11 +390,11 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 mainFrameFailed = false
-                // 每次新页面加载时重置缩放状态：setInitialScale(0) 让 WebView 配合
-                // overviewMode 自动计算"整页塞进屏幕"的缩放比例，桌面网页布局完整保留。
+                // 重置缩放状态：setInitialScale(0) 让 WebView 配合 overviewMode
+                // 自动计算"整页塞进屏幕"的缩放比例，桌面网页布局完整保留。
                 view.setInitialScale(0)
-                // 新页面开始加载时先把顶栏放出来
-                applyTopBarState(hide = false, animate = true)
+                // 每次新页面加载时把顶栏位移归位
+                applyTopBarOffset()
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -571,64 +568,25 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 顶栏（含进度条）覆盖在网页之上，网页整体被顶栏高度向下推一段，
-     * 网页顶部不会被顶栏遮挡；顶栏收起时位移归零，不触发 WebView 重新布局。
+     * 网页顶部不会被顶栏遮挡。顶栏固定显示，不随滚动收起。
      */
     private fun configureTopBar() {
         binding.topBar.doOnPreDraw {
             topBarHeight = binding.topBar.height
-            applyTopBarState(hide = false, animate = false)
+            applyTopBarOffset()
         }
-    }
-
-    private fun configureScrollHiding() {
-        // 顶栏固定显示，不随滚动收起：不再安装触摸方向兜底监听。
-        // （网页滚动仍由注入的 JS 上报，但收起请求在 applyTopBarState 被拒绝。）
     }
 
     /**
-     * 收起或展开顶栏。当前产品决策为**顶栏固定**，因此一切 hide=true
-     * 请求直接拒绝，保证 JS 上报 / 历史调用路径都无法收起顶栏。
-     *
-     * @param hide true 收起（被忽略），false 展开
-     * @param animate 是否播放动画
+     * 顶栏固定就位：顶栏 translationY 归零，网页整体下推一个顶栏高度。
+     * 需在顶栏完成布局（取得实测高度）后调用，高度未知时跳过。
      */
-    private fun applyTopBarState(hide: Boolean, animate: Boolean) {
-        if (hide) {
-            return
-        }
+    private fun applyTopBarOffset() {
         if (topBarHeight <= 0) {
             return
         }
-        val barTarget = if (hide) -topBarHeight.toFloat() else 0f
-        val contentTarget = if (hide) 0f else topBarHeight.toFloat()
-
-        if (!topBarSettled) {
-            topBarSettled = true
-            topBarHidden = hide
-            binding.topBar.translationY = barTarget
-            webView.translationY = contentTarget
-            return
-        }
-        if (topBarHidden == hide) {
-            return
-        }
-        topBarHidden = hide
-
-        if (!animate) {
-            binding.topBar.translationY = barTarget
-            webView.translationY = contentTarget
-            return
-        }
-        binding.topBar.animate().cancel()
-        webView.animate().cancel()
-        binding.topBar.animate()
-            .translationY(barTarget)
-            .setDuration(TOP_BAR_ANIM_MS)
-            .start()
-        webView.animate()
-            .translationY(contentTarget)
-            .setDuration(TOP_BAR_ANIM_MS)
-            .start()
+        binding.topBar.translationY = 0f
+        webView.translationY = topBarHeight.toFloat()
     }
 
     // ------------------------------------------------------------------
@@ -729,14 +687,13 @@ class MainActivity : AppCompatActivity() {
         realParent.addView(fresh, index, layoutParams)
         webView = fresh
 
-        // 按崩溃前的顶栏状态就位
-        fresh.translationY = if (topBarHeight > 0 && !topBarHidden) topBarHeight.toFloat() else 0f
+        // 顶栏固定：新 WebView 直接下推一个顶栏高度
+        fresh.translationY = if (topBarHeight > 0) topBarHeight.toFloat() else 0f
 
         configureWebView()
         configureWebChromeClient()
         configureWebViewClient()
         configureDownloadListener()
-        configureScrollHiding()
     }
 
     // ------------------------------------------------------------------
@@ -938,12 +895,12 @@ class MainActivity : AppCompatActivity() {
         if (Urls.isSamePage(webView.url, home)) {
             return
         }
-        applyTopBarState(hide = false, animate = true)
+        applyTopBarOffset()
         webView.loadUrl(home)
     }
 
-    /** 暴露给网页的最小接口：PWA 缓存异步清理完成事件。 */
-    private inner class ScrollBridge {
+    /** 暴露给网页的最小桥接（window.SolarpanelHost）：PWA 缓存异步清理完成事件。 */
+    private inner class SwCleanupBridge {
 
         @JavascriptInterface
         fun onSwCleanupDone() {
@@ -1584,8 +1541,7 @@ class MainActivity : AppCompatActivity() {
                     // 首帧测到的高度是 0，位移从未生效；恢复可见后重新测量并应用
                     binding.topBar.doOnPreDraw {
                         topBarHeight = binding.topBar.height
-                        topBarSettled = false
-                        applyTopBarState(hide = false, animate = false)
+                        applyTopBarOffset()
                     }
                 }
                 .start()
@@ -1599,7 +1555,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
 
         private const val DOUBLE_BACK_INTERVAL_MS = 2000L
-        private const val TOP_BAR_ANIM_MS = 180L
         private const val SPLASH_SYSTEM_MS = 300L
         private const val SPLASH_BRAND_MS = 1600L
         private const val SPLASH_FADE_MS = 450L

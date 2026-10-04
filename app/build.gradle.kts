@@ -11,8 +11,8 @@ android {
         applicationId = "com.solarpanel.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 53
-        versionName = "2.3.1"
+        versionCode = 54
+        versionName = "2.3.2"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -34,10 +34,6 @@ android {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
             // 仓库内没有密钥库时退化为 debug 签名，保证始终能产出可安装包；
             // CI 会保证密钥库存在，正式产物始终使用 release 签名。
             signingConfig = if (rootProject.file("keystore/solarpanel.jks").exists()) {

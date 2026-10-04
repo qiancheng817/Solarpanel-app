@@ -18,6 +18,9 @@ import java.net.URL
  */
 object ApkDownloader {
 
+    /** 下载时手动跟随重定向的最大跳数。 */
+    private const val MAX_REDIRECTS = 5
+
     sealed class State {
         /** [percent] 0-100，总大小未知时为 -1 */
         data class Progress(val percent: Int) : State()
@@ -59,10 +62,12 @@ object ApkDownloader {
         proxy: String,
         onProgress: (Int) -> Unit
     ): File {
-        // 手动跟随重定向：github.com → objects.githubusercontent.com
+        // 手动跟随重定向：github.com → objects.githubusercontent.com。
+        // 每跳都 disconnect 上一个连接；收到 200 立即跳出，避免对最终地址重复发起请求。
         var current = url
         var conn: HttpURLConnection? = null
-        repeat(5) {
+        var redirectCount = 0
+        while (true) {
             val parsed = UpdateChecker.parseProxy(proxy)
             val c = if (parsed != null) {
                 URL(current).openConnection(parsed) as HttpURLConnection
@@ -73,19 +78,24 @@ object ApkDownloader {
             c.connectTimeout = 15_000
             c.readTimeout = 30_000
             c.setRequestProperty("User-Agent", "solarpanel-android")
-            val code = c.responseCode
-            when (code) {
+            when (val code = c.responseCode) {
                 in 300..399 -> {
+                    if (redirectCount >= MAX_REDIRECTS) {
+                        c.disconnect()
+                        throw RuntimeException("重定向次数过多")
+                    }
                     val loc = c.getHeaderField("Location")
-                        ?: throw RuntimeException("重定向缺少 Location")
+                    if (loc == null) {
+                        c.disconnect()
+                        throw RuntimeException("重定向缺少 Location")
+                    }
                     c.disconnect()
                     current = loc
-                    conn = null
-                    return@repeat
+                    redirectCount++
                 }
                 HttpURLConnection.HTTP_OK -> {
                     conn = c
-                    return@repeat
+                    break
                 }
                 else -> {
                     c.disconnect()
@@ -93,7 +103,7 @@ object ApkDownloader {
                 }
             }
         }
-        val finalConn = conn ?: throw RuntimeException("重定向次数过多")
+        val finalConn = conn ?: throw RuntimeException("无法建立下载连接")
 
         val outFile = File(context.cacheDir, "update-${System.currentTimeMillis()}.apk")
         return try {

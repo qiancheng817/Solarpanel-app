@@ -21,7 +21,6 @@
     <string name="menu_sheet_title">操作</string>
     <string name="menu_close">关闭并返回首页</string>
     <string name="menu_refresh">刷新</string>
-    <string name="menu_change_server">修改服务器地址</string>
     <string name="menu_switch_server">切换服务器</string>
     <string name="menu_add_server">添加新服务器</string>
     <string name="menu_server_history_empty">还没有连接记录，添加一个服务器地址吧</string>
@@ -75,7 +74,6 @@
     <string name="about_no_server">尚未设置</string>
     <string name="clear_data_title">清除缓存与登录状态</string>
     <string name="clear_data_message">将清空网页缓存、Cookie 和本地存储，你需要重新登录 solarpanel 后台。是否继续？</string>
-    <string name="file_chooser_title">选择文件</string>
 
     <!-- 反代 Basic 认证 -->
     <string name="auth_username">用户名</string>

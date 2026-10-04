@@ -20,7 +20,6 @@
         android:textColor="@color/app_text_primary" />
 
     <ScrollView
-        android:id="@+id/historyScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:maxHeight="240dp">

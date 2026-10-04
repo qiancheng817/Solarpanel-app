@@ -107,7 +107,7 @@ object Urls {
      * 自托管面板在反代、容器端口映射等场景下，返回的卡片链接可能写成 localhost，
      * 手机上的 WebView 去连手机自身的 localhost 当然是连不上的。
      */
-    fun isLocalHost(host: String?): Boolean {
+    private fun isLocalHost(host: String?): Boolean {
         if (host.isNullOrEmpty()) {
             return false
         }

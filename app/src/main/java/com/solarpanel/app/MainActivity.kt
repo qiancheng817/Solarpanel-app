@@ -315,11 +315,6 @@ class MainActivity : AppCompatActivity() {
                         binding.progressBar.visibility = View.VISIBLE
                     }
                 }
-                // 加载过程中提前注入：面板 HTML 一旦解析出 head，
-                // 样式立即生效，避免首开先看到老样式、刷新才正常。幂等，可重复调用。
-                if (newProgress in 20..99) {
-                    injectPanelCssFix()
-                }
             }
 
             override fun onReceivedTitle(view: WebView, title: String?) {
@@ -409,13 +404,11 @@ class MainActivity : AppCompatActivity() {
                 if (!mainFrameFailed) {
                     hideErrorPanel()
                 }
-                injectPanelCssFix()
                 updateCloseButton()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次
-                injectPanelCssFix()
+                // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次关闭按钮状态
                 updateCloseButton()
             }
 
@@ -912,11 +905,6 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // JS 注入
     // ------------------------------------------------------------------
-
-    /** 注入面板手机端适配样式，详见 PANEL_CSS_FIX_JS。 */
-    private fun injectPanelCssFix() {
-        webView.evaluateJavascript(PANEL_CSS_FIX_JS, null)
-    }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
     private fun updateCloseButton() {
@@ -1634,42 +1622,6 @@ class MainActivity : AppCompatActivity() {
             "<meta\\s+[^>]*[\"']viewport[\"'][^>]*name\\s*=\\s*[\"'][^\"']+[\"'][^>]*/?>",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
-
-        /**
-         * 面板手机端适配（幂等）：
-         * 1) 永久隐藏面板网页自带顶栏 .topbar（其滚动自动隐藏功能随之失效），
-         *    内外网切换已挪到原生底部操作面板；
-         * 2) 去掉页面顶部留白（content-pt 与时钟区上边距），收紧页面与分组边距、
-         *    缩小卡片图标与字号，让服务卡片在窄屏稳定排成两列（detail 风格）
-         *    或三列（app 小图标风格）；
-         * 3) 补 .group-head 的 flex-wrap，避免分组标题被挤成竖排。
-         */
-        private val PANEL_CSS_FIX_JS =
-            "(function(){" +
-                "if(document.getElementById('solarpanel-css-fix')){return;}" +
-                "var s=document.createElement('style');" +
-                "s.id='solarpanel-css-fix';" +
-                "s.textContent='" +
-                ".topbar{display:none !important;}" +
-                "@media (max-width:640px){" +
-                ".page{padding-top:0 !important;padding-left:10px;padding-right:10px;}" +
-                ".clock-area{margin:12px auto 12px !important;}" +
-                ".group{padding:13px 11px 14px;margin-bottom:12px;}" +
-                ".group-head{flex-wrap:wrap;gap:8px;margin-bottom:10px;}" +
-                ".group-head h2{flex:0 0 auto;font-size:16px;}" +
-                ".group-head .desc{min-width:0;font-size:12px;}" +
-                ".cards{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px;}" +
-                ".cards.style-app{grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;}" +
-                ".card{padding:10px;gap:9px;border-radius:15px;}" +
-                ".card .icon{width:42px;height:42px;border-radius:12px;font-size:17px;}" +
-                ".card .info .t{font-size:13px;}" +
-                ".card .info .d{font-size:11px;}" +
-                ".card.app-card{padding:12px 6px 10px;gap:7px;}" +
-                ".card.app-card .icon{width:50px;height:50px;border-radius:14px;}" +
-                ".card.app-card .info .t{font-size:12px;max-width:88px;}" +
-                "}';" +
-                "(document.head||document.documentElement).appendChild(s);" +
-                "})();"
 
         /**
          * 清除数据时执行：注销全部 Service Worker 注册并清空 Cache Storage，

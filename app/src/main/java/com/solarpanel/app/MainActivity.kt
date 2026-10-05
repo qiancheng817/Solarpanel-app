@@ -1523,14 +1523,19 @@ class MainActivity : AppCompatActivity() {
          * 设计原则：不重写面板任何分组逻辑，手势成立时"模拟点击"面板自己的分组项，
          * 由面板 onclick 完成高亮与卡片重绘，天然与面板行为保持一致。
          *
-         * 抗后端升级：全部按 DOM 契约特性探测——优先 v2.1.17+ 的圆形图标条
-         * #navbarMobile/.nm-item，找不到时回退旧版下拉框 #navbarSelect，
-         * 两者都没有或不可见时完全不动作（静默休眠，不报错、不影响页面）。
+         * 抗后端升级——后端将来若自带卡片区触摸翻页，本注入自动让位：
+         * 1) 约定标记位 data-sp-native-swipe=1 / window.__SP_NATIVE_SWIPE__；
+         * 2) 起手点祖先链存在 touch-action 限制（pan-y/pan-x/none），视为已有手势接管者；
+         * 3) 监听在冒泡阶段（晚于页面自有监听）：事件已被 preventDefault、或激活
+         *    索引已朝滑动方向自行变化时立即放弃；
+         * 4) 延迟一个微任务+0ms 复查索引，覆盖晚注册 / 异步监听；
+         * 5) 契约全部失效（找不到分组条）时整体静默休眠。
          *
          * 边界保护：
+         * - 起手点必须在 #groupsWrap 卡片区内（时钟/搜索/页脚/空白不触发）；
          * - 起点距左缘 34px 内让给原生边缘后退手势；
-         * - 起点在图标条内不接管（图标条自身要横向滚动）；
-         * - 弹窗 / 输入控件 / 按钮上起手不接管；
+         * - 起点在图标条 / 弹窗 / 输入控件 / 按钮上不接管；
+         * - 管理员排序模式（state.sortingGroupId !== null）下禁用；
          * - 仅水平占优（dx>48 且 dx>dy*1.3）才 preventDefault，纵向滚动永远放行；
          * - 每次手势最多切一个分组；多点触控忽略。
          */
@@ -1538,7 +1543,7 @@ class MainActivity : AppCompatActivity() {
             "(function(){" +
                 "if(window.__spGroupSwipe){return;}" +
                 "window.__spGroupSwipe=true;" +
-                "var EDGE=34,TH=48,x0=0,y0=0,armed=false,fired=false;" +
+                "var EDGE=34,TH=48,x0=0,y0=0,armed=false,fired=false,startIdx=-1;" +
                 "function visible(el){" +
                 "if(!el||el.hidden){return false;}" +
                 "try{return getComputedStyle(el).display!=='none'&&el.offsetParent!==null;}" +
@@ -1559,6 +1564,36 @@ class MainActivity : AppCompatActivity() {
                 "for(var i=0;i<c.items.length;i++){" +
                 "if(c.items[i].classList.contains('active')){return i;}}" +
                 "return -1;}" +
+                // 原生翻页标记位（约定契约）
+                "function nativeFlag(){" +
+                "try{" +
+                "if(window.__SP_NATIVE_SWIPE__){return true;}" +
+                "var d=document.documentElement;" +
+                "if(d&&(d.getAttribute('data-sp-native-swipe')==='1'" +
+                "||(d.dataset&&d.dataset.spNativeSwipe==='1'))){return true;}" +
+                "}catch(e){}" +
+                "return false;}" +
+                // 起手点祖先链存在 touch-action 限制 -> 已有 pointer/touch 手势接管者
+                "function touchActionClaimed(target,root){" +
+                "try{" +
+                "var n=target,steps=0;" +
+                "while(n&&steps<12){" +
+                "var v=getComputedStyle(n).touchAction||'';" +
+                "if(/(?:^|\\s)(none|pan-y|pan-x|pan-left|pan-right)/.test(v)){return true;}" +
+                "if(n===root){break;}" +
+                "n=n.parentElement;steps++;" +
+                "}}catch(e){}" +
+                "return false;}" +
+                // 管理员卡片排序模式：优先 DOM 标记（分组 section.sorting），回退全局 state
+                "function sorting(){" +
+                "try{" +
+                "var w=document.getElementById('groupsWrap');" +
+                "if(w&&w.querySelector('.group.sorting,.sorting')){return true;}" +
+                "if(w&&w.querySelector('.btn-save-order')){return true;}" +
+                "if(typeof state!=='undefined'&&state" +
+                "&&state.sortingGroupId!==null&&state.sortingGroupId!==undefined){return true;}" +
+                "}catch(e){}" +
+                "return false;}" +
                 "function choose(c,n){" +
                 "try{" +
                 "if(c.type==='item'){" +
@@ -1576,15 +1611,20 @@ class MainActivity : AppCompatActivity() {
                 "||t.isContentEditable);" +
                 "}catch(e){return false;}}" +
                 "document.addEventListener('touchstart',function(e){" +
-                "armed=false;fired=false;" +
+                "armed=false;fired=false;startIdx=-1;" +
                 "if(e.touches.length!==1){return;}" +
+                "if(nativeFlag()){return;}" +
                 "var c=ctx();" +
                 "if(!c){return;}" +
+                "var wrap=document.getElementById('groupsWrap');" +
+                "if(!wrap||!wrap.contains(e.target)){return;}" +
+                "if(sorting()){return;}" +
                 "var t=e.touches[0];" +
                 "if(t.clientX<EDGE){return;}" +
                 "if(c.bar.contains(e.target)){return;}" +
                 "if(ignored(e.target)){return;}" +
-                "x0=t.clientX;y0=t.clientY;armed=true;" +
+                "if(touchActionClaimed(e.target,wrap)){return;}" +
+                "x0=t.clientX;y0=t.clientY;startIdx=activeIndex(c);armed=true;" +
                 "},{passive:true});" +
                 "document.addEventListener('touchmove',function(e){" +
                 "if(!armed||fired){return;}" +
@@ -1593,13 +1633,27 @@ class MainActivity : AppCompatActivity() {
                 "if(Math.abs(dy)>TH&&Math.abs(dy)>Math.abs(dx)){armed=false;return;}" +
                 "if(Math.abs(dx)>TH&&Math.abs(dx)>Math.abs(dy)*1.3){" +
                 "fired=true;" +
+                "if(nativeFlag()||sorting()){armed=false;return;}" +
                 "var c=ctx();" +
-                "if(!c){return;}" +
-                "var i=activeIndex(c),n=dx<0?i+1:i-1;" +
-                "if(n>=0&&n<c.items.length){choose(c,n);}" +
-                "e.preventDefault();}" +
+                "if(!c){armed=false;return;}" +
+                "var want=dx<0?1:-1;" +
+                "var iNow=activeIndex(c);" +
+                // 冒泡阶段：事件已被原生监听 preventDefault，或索引已自行朝该方向变化
+                "if(e.defaultPrevented||(startIdx>=0&&iNow===startIdx+want)){" +
+                "armed=false;return;}" +
+                "var n=iNow+want;" +
+                "if(iNow<0||n<0||n>=c.items.length){armed=false;return;}" +
+                "e.preventDefault();" +
+                // 让同事件循环内其他监听（含晚注册/异步）先跑完，再复查索引决定是否点击
+                "var iSnap=iNow,cc=c,did=false;" +
+                "var commit=function(){" +
+                "if(did){return;}did=true;" +
+                "if(activeIndex(cc)!==iSnap){return;}" +
+                "choose(cc,iSnap+want);};" +
+                "Promise.resolve().then(function(){setTimeout(commit,0);});" +
+                "}" +
                 "},{passive:false});" +
-                "function end(){armed=false;fired=false;}" +
+                "function end(){armed=false;fired=false;startIdx=-1;}" +
                 "document.addEventListener('touchend',end,{passive:true});" +
                 "document.addEventListener('touchcancel',end,{passive:true});" +
                 "})();"

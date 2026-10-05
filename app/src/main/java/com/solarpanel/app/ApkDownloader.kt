@@ -12,9 +12,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 应用内 APK 下载器：系统 DownloadManager 不支持代理，这里自己实现。
- * 支持 HTTP 代理（跟随 302 跳转到 objects.githubusercontent.com），
- * 带进度回调，完成后通过 FileProvider 拉起系统安装器。
+ * 应用内 APK 下载器：自己发起 HTTP 请求（跟随 302 跳转到
+ * objects.githubusercontent.com），带进度回调，
+ * 完成后通过 FileProvider 拉起系统安装器。
  */
 object ApkDownloader {
 
@@ -30,7 +30,7 @@ object ApkDownloader {
 
     private var running = false
 
-    fun download(context: Context, url: String, proxy: String, callback: (State) -> Unit) {
+    fun download(context: Context, url: String, callback: (State) -> Unit) {
         if (running) {
             callback(State.Error("已有下载任务进行中"))
             return
@@ -40,7 +40,7 @@ object ApkDownloader {
         val mainHandler = Handler(Looper.getMainLooper())
         Thread {
             try {
-                val file = doDownload(appContext, url, proxy) { percent ->
+                val file = doDownload(appContext, url) { percent ->
                     mainHandler.post { callback(State.Progress(percent)) }
                 }
                 mainHandler.post { callback(State.Done(file)) }
@@ -59,7 +59,6 @@ object ApkDownloader {
     private fun doDownload(
         context: Context,
         url: String,
-        proxy: String,
         onProgress: (Int) -> Unit
     ): File {
         // 手动跟随重定向：github.com → objects.githubusercontent.com。
@@ -68,12 +67,7 @@ object ApkDownloader {
         var conn: HttpURLConnection? = null
         var redirectCount = 0
         while (true) {
-            val parsed = UpdateChecker.parseProxy(proxy)
-            val c = if (parsed != null) {
-                URL(current).openConnection(parsed) as HttpURLConnection
-            } else {
-                URL(current).openConnection() as HttpURLConnection
-            }
+            val c = URL(current).openConnection() as HttpURLConnection
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
             c.readTimeout = 30_000

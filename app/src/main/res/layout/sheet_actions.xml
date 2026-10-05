@@ -78,52 +78,6 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/rowLan"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minHeight="50dp"
-        android:background="?attr/selectableItemBackground"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp">
-
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:contentDescription="@string/menu_lan"
-            android:src="@drawable/ic_settings_ethernet"
-            app:tint="@color/brand_blue_dark" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:orientation="vertical"
-            android:paddingTop="7dp"
-            android:paddingBottom="7dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/menu_lan"
-                android:textColor="@color/app_text_primary"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/lanHint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:text="@string/menu_lan_wan_hint"
-                android:textColor="@color/app_text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <LinearLayout
         android:id="@+id/rowChangeServer"
         android:layout_width="match_parent"
         android:layout_height="50dp"
@@ -149,51 +103,6 @@
             android:text="@string/menu_switch_server"
             android:textColor="@color/app_text_primary"
             android:textSize="16sp" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/rowProxy"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minHeight="50dp"
-        android:background="?attr/selectableItemBackground"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp">
-
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:contentDescription="@string/menu_proxy"
-            android:src="@drawable/ic_settings_ethernet"
-            app:tint="@color/brand_blue_dark" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:orientation="vertical"
-            android:paddingTop="7dp"
-            android:paddingBottom="7dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/menu_proxy"
-                android:textColor="@color/app_text_primary"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/proxyHint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:textColor="@color/app_text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout

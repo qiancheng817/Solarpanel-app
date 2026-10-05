@@ -401,11 +401,13 @@ class MainActivity : AppCompatActivity() {
                 if (!mainFrameFailed) {
                     hideErrorPanel()
                 }
+                injectGroupSwipe()
                 updateCloseButton()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次关闭按钮状态
+                // SPA 路由切换（pushState）不触发 onPageFinished，这里补一次手势绑定与关闭按钮状态
+                injectGroupSwipe()
                 updateCloseButton()
             }
 
@@ -501,35 +503,6 @@ class MainActivity : AppCompatActivity() {
             else R.string.menu_toggle_display_to_mobile
         )
 
-        // 内外网切换项：仅面板页面存在 #lanBtn 时显示，副标题反映当前模式
-        sheetBinding.rowLan.isVisible = false
-        webView.evaluateJavascript(
-            "(function(){var b=document.getElementById('lanBtn');" +
-                "if(!b){return 'none';}" +
-                "return localStorage.getItem('sp_lan_mode')==='lan'?'lan':'wan';})();"
-        ) { result ->
-            val mode = result?.removeSurrounding("\"")
-            if (mode == "lan" || mode == "wan") {
-                sheetBinding.lanHint.setText(
-                    if (mode == "lan") R.string.menu_lan_lan_hint
-                    else R.string.menu_lan_wan_hint
-                )
-                sheetBinding.rowLan.isVisible = true
-            }
-        }
-
-        // 更新代理：检查更新/下载 APK 走该代理，副标题显示当前值
-        val currentProxy = Prefs.getProxy(this)
-        sheetBinding.proxyHint.text = if (currentProxy.isBlank()) {
-            getString(R.string.menu_proxy_hint_direct)
-        } else {
-            getString(R.string.menu_proxy_hint_set, currentProxy)
-        }
-        sheetBinding.rowProxy.setOnClickListener {
-            dialog.dismiss()
-            showProxyDialog()
-        }
-
         sheetBinding.rowRefresh.setOnClickListener {
             dialog.dismiss()
             if (webView.url != null) webView.reload()
@@ -537,13 +510,6 @@ class MainActivity : AppCompatActivity() {
         sheetBinding.rowToggleDisplay.setOnClickListener {
             dialog.dismiss()
             toggleDisplayMode()
-        }
-        sheetBinding.rowLan.setOnClickListener {
-            // 直接触发面板原切换逻辑（更新卡片地址模式、localStorage 与提示）
-            webView.evaluateJavascript(
-                "var b=document.getElementById('lanBtn');if(b){b.click();}", null
-            )
-            dialog.dismiss()
         }
         sheetBinding.rowChangeServer.setOnClickListener {
             dialog.dismiss()
@@ -862,6 +828,11 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // JS 注入
     // ------------------------------------------------------------------
+
+    /** 注入卡片区横滑切组手势，详见 GROUP_SWIPE_JS（幂等）。 */
+    private fun injectGroupSwipe() {
+        webView.evaluateJavascript(GROUP_SWIPE_JS, null)
+    }
 
     /** 只有在"当前不在面板首页"时，顶栏才显示关闭按钮。 */
     private fun updateCloseButton() {
@@ -1274,40 +1245,8 @@ class MainActivity : AppCompatActivity() {
         runUpdateCheck(silent = false)
     }
 
-    /** 更新代理设置弹窗：留空=直连，否则形如 127.0.0.1:7890。 */
-    private fun showProxyDialog() {
-        val input = EditText(this).apply {
-            setText(Prefs.getProxy(this@MainActivity))
-            hint = getString(R.string.proxy_dialog_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine()
-            val pad = TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, 24f, resources.displayMetrics
-            ).toInt()
-            setPadding(pad, 0, pad, 0)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.proxy_dialog_title)
-            .setMessage(R.string.proxy_dialog_message)
-            .setView(input)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.dialog_ok) { _, _ ->
-                val value = input.text.toString().trim()
-                if (value.isEmpty()) {
-                    Prefs.setProxy(this, "")
-                    toast(R.string.toast_proxy_saved)
-                } else if (UpdateChecker.parseProxy(value) != null) {
-                    Prefs.setProxy(this, value)
-                    toast(R.string.toast_proxy_saved)
-                } else {
-                    toast(R.string.toast_proxy_invalid)
-                }
-            }
-            .show()
-    }
-
     private fun runUpdateCheck(silent: Boolean) {
-        UpdateChecker.check(BuildConfig.VERSION_NAME, Prefs.getProxy(this)) { result ->
+        UpdateChecker.check(BuildConfig.VERSION_NAME) { result ->
             when (result) {
                 is UpdateChecker.Result.HasUpdate ->
                     showUpdateDialog(result.info)
@@ -1370,7 +1309,7 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
         updateProgressDialog = dialog
 
-        ApkDownloader.download(this, info.apkUrl, Prefs.getProxy(this)) { state ->
+        ApkDownloader.download(this, info.apkUrl) { state ->
             when (state) {
                 is ApkDownloader.State.Progress -> {
                     if (state.percent >= 0) progress.progress = state.percent
@@ -1577,6 +1516,93 @@ class MainActivity : AppCompatActivity() {
             "<meta\\s+[^>]*[\"']viewport[\"'][^>]*name\\s*=\\s*[\"'][^\"']+[\"'][^>]*/?>",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
+
+        /**
+         * 卡片区域左右滑切换分组（幂等，整页只绑定一次 document 级监听）。
+         *
+         * 设计原则：不重写面板任何分组逻辑，手势成立时"模拟点击"面板自己的分组项，
+         * 由面板 onclick 完成高亮与卡片重绘，天然与面板行为保持一致。
+         *
+         * 抗后端升级：全部按 DOM 契约特性探测——优先 v2.1.17+ 的圆形图标条
+         * #navbarMobile/.nm-item，找不到时回退旧版下拉框 #navbarSelect，
+         * 两者都没有或不可见时完全不动作（静默休眠，不报错、不影响页面）。
+         *
+         * 边界保护：
+         * - 起点距左缘 34px 内让给原生边缘后退手势；
+         * - 起点在图标条内不接管（图标条自身要横向滚动）；
+         * - 弹窗 / 输入控件 / 按钮上起手不接管；
+         * - 仅水平占优（dx>48 且 dx>dy*1.3）才 preventDefault，纵向滚动永远放行；
+         * - 每次手势最多切一个分组；多点触控忽略。
+         */
+        private val GROUP_SWIPE_JS =
+            "(function(){" +
+                "if(window.__spGroupSwipe){return;}" +
+                "window.__spGroupSwipe=true;" +
+                "var EDGE=34,TH=48,x0=0,y0=0,armed=false,fired=false;" +
+                "function visible(el){" +
+                "if(!el||el.hidden){return false;}" +
+                "try{return getComputedStyle(el).display!=='none'&&el.offsetParent!==null;}" +
+                "catch(e){return false;}}" +
+                "function ctx(){" +
+                "try{" +
+                "var bar=document.getElementById('navbarMobile');" +
+                "if(visible(bar)){" +
+                "var its=bar.querySelectorAll('.nm-item');" +
+                "if(its&&its.length>=2){return{type:'item',bar:bar,items:its};}}" +
+                "var sel=document.getElementById('navbarSelect');" +
+                "if(visible(sel)&&sel.options&&sel.options.length>=2){" +
+                "return{type:'select',bar:sel,items:sel.options};}" +
+                "}catch(e){}" +
+                "return null;}" +
+                "function activeIndex(c){" +
+                "if(c.type==='select'){return c.bar.selectedIndex;}" +
+                "for(var i=0;i<c.items.length;i++){" +
+                "if(c.items[i].classList.contains('active')){return i;}}" +
+                "return -1;}" +
+                "function choose(c,n){" +
+                "try{" +
+                "if(c.type==='item'){" +
+                "c.items[n].click();" +
+                "var it=c.items[n];" +
+                "if(it.scrollIntoView){it.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}" +
+                "}else{" +
+                "c.bar.selectedIndex=n;" +
+                "c.bar.dispatchEvent(new Event('change',{bubbles:true}));}" +
+                "}catch(e){}}" +
+                "function ignored(t){" +
+                "try{" +
+                "if(!t||!t.closest){return false;}" +
+                "return !!(t.closest('.modal,.guest-lock,input,textarea,select,button,[contenteditable=true]')" +
+                "||t.isContentEditable);" +
+                "}catch(e){return false;}}" +
+                "document.addEventListener('touchstart',function(e){" +
+                "armed=false;fired=false;" +
+                "if(e.touches.length!==1){return;}" +
+                "var c=ctx();" +
+                "if(!c){return;}" +
+                "var t=e.touches[0];" +
+                "if(t.clientX<EDGE){return;}" +
+                "if(c.bar.contains(e.target)){return;}" +
+                "if(ignored(e.target)){return;}" +
+                "x0=t.clientX;y0=t.clientY;armed=true;" +
+                "},{passive:true});" +
+                "document.addEventListener('touchmove',function(e){" +
+                "if(!armed||fired){return;}" +
+                "if(e.touches.length!==1){return;}" +
+                "var t=e.touches[0],dx=t.clientX-x0,dy=t.clientY-y0;" +
+                "if(Math.abs(dy)>TH&&Math.abs(dy)>Math.abs(dx)){armed=false;return;}" +
+                "if(Math.abs(dx)>TH&&Math.abs(dx)>Math.abs(dy)*1.3){" +
+                "fired=true;" +
+                "var c=ctx();" +
+                "if(!c){return;}" +
+                "var i=activeIndex(c),n=dx<0?i+1:i-1;" +
+                "if(n>=0&&n<c.items.length){choose(c,n);}" +
+                "e.preventDefault();}" +
+                "},{passive:false});" +
+                "function end(){armed=false;fired=false;}" +
+                "document.addEventListener('touchend',end,{passive:true});" +
+                "document.addEventListener('touchcancel',end,{passive:true});" +
+                "})();"
 
         /**
          * 清除数据时执行：注销全部 Service Worker 注册并清空 Cache Storage，

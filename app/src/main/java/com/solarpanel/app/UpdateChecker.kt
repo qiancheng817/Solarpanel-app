@@ -4,8 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.URL
 
 /**
@@ -35,23 +33,13 @@ object UpdateChecker {
         data class Error(val message: String) : Result()
     }
 
-    /** 解析 "host:port" 形式的代理配置，格式非法返回 null。 */
-    fun parseProxy(proxy: String): Proxy? {
-        if (proxy.isBlank()) return null
-        val parts = proxy.trim().split(':')
-        if (parts.size != 2) return null
-        val port = parts[1].toIntOrNull() ?: return null
-        return Proxy(Proxy.Type.HTTP, InetSocketAddress(parts[0].trim(), port))
-    }
-
     /**
      * 后台线程发起请求，主线程回调 [callback]。
-     * [proxy] 为 Prefs.getProxy 的值，空 = 直连。
      */
-    fun check(currentVersionName: String, proxy: String, callback: (Result) -> Unit) {
+    fun check(currentVersionName: String, callback: (Result) -> Unit) {
         val mainHandler = Handler(Looper.getMainLooper())
         Thread {
-            val result = runCatching { fetchRelease(proxy) }
+            val result = runCatching { fetchRelease() }
                 .fold(
                     onSuccess = { release ->
                         if (release == null) {
@@ -72,26 +60,23 @@ object UpdateChecker {
         }
     }
 
-    private fun openConnection(url: String, proxy: String): HttpURLConnection {
-        val parsed = parseProxy(proxy)
-            ?: return URL(url).openConnection() as HttpURLConnection
-        return URL(url).openConnection(parsed) as HttpURLConnection
-    }
+    private fun openConnection(url: String): HttpURLConnection =
+        URL(url).openConnection() as HttpURLConnection
 
-    private fun fetchRelease(proxy: String): ReleaseInfo? {
+    private fun fetchRelease(): ReleaseInfo? {
         // 优先走 API（能拿到更新说明）；API 匿名限额 60次/小时按出口 IP 计，
-        // 共享代理出口常被用光返回 403，此时回退到 releases/latest 网页跳转方式。
+        // 共享网络出口常被用光返回 403，此时回退到 releases/latest 网页跳转方式。
         return try {
-            fetchReleaseViaApi(proxy)
+            fetchReleaseViaApi()
         } catch (e: ApiException) {
-            fetchReleaseViaRedirect(proxy)
+            fetchReleaseViaRedirect()
         }
     }
 
     private class ApiException(message: String) : RuntimeException(message)
 
-    private fun fetchReleaseViaApi(proxy: String): ReleaseInfo? {
-        val conn = openConnection(API_URL, proxy).apply {
+    private fun fetchReleaseViaApi(): ReleaseInfo? {
+        val conn = openConnection(API_URL).apply {
             connectTimeout = 10_000
             readTimeout = 10_000
             requestMethod = "GET"
@@ -132,8 +117,8 @@ object UpdateChecker {
      * 兜底：releases/latest 会 302 到 releases/tag/vX.Y.Z，
      * 从 Location 解析版本号，按命名约定拼出 APK 直链（无更新说明）。
      */
-    private fun fetchReleaseViaRedirect(proxy: String): ReleaseInfo {
-        val conn = openConnection(RELEASES_LATEST_URL, proxy).apply {
+    private fun fetchReleaseViaRedirect(): ReleaseInfo {
+        val conn = openConnection(RELEASES_LATEST_URL).apply {
             connectTimeout = 10_000
             readTimeout = 10_000
             instanceFollowRedirects = false
